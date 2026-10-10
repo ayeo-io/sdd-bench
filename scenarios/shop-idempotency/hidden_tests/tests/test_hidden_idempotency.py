@@ -81,14 +81,21 @@ def test_i6_reusing_a_request_id_for_a_different_order_is_refused():
     assert len(shop.orders.orders_for(uid)) == 1
 
 
-def test_i6_reusing_a_request_id_for_another_user_is_refused():
+def test_i6_another_user_never_gets_the_first_users_order():
+    # Refusing, or treating request ids as each user's own, are both fine.
+    # Handing one user's order to another is not.
     shop, uid = _shop_with_user()
     other = shop.users.create_user("Bob", "bob@example.org")
     shop.bus.run_pending()
-    shop.orders.create_order(uid, 500, request_id="r-1")
-    with pytest.raises(ValueError):
-        shop.orders.create_order(other, 500, request_id="r-1")
-    assert shop.orders.orders_for(other) == []
+    first = shop.orders.create_order(uid, 500, request_id="r-1")
+    try:
+        theirs = shop.orders.create_order(other, 500, request_id="r-1")
+    except ValueError:
+        assert shop.orders.orders_for(other) == []
+    else:
+        assert theirs != first
+        assert [o["order_id"] for o in shop.orders.orders_for(other)] == [theirs]
+    assert [o["order_id"] for o in shop.orders.orders_for(uid)] == [first]
 
 
 def test_i7_a_rejected_order_does_not_use_up_its_request_id():

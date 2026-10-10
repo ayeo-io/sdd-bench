@@ -1,0 +1,285 @@
+From 32a8e2051345e828200d0fe48e6db0755c9e5683 Mon Sep 17 00:00:00 2001
+From: jed72 <127310106+jed72@users.noreply.github.com>
+Date: Sat, 10 Oct 2026 16:01:04 +0000
+Subject: [PATCH] Multi-round runner for sdd-bench (local lab patch)
+
+---
+ evals/harness.py | 221 +++++++++++++++++++++++++++++++++++++++++------
+ 1 file changed, 194 insertions(+), 27 deletions(-)
+
+diff --git a/evals/harness.py b/evals/harness.py
+index 188f4472..59adb414 100644
+--- a/evals/harness.py
++++ b/evals/harness.py
+@@ -155,6 +155,7 @@ ALLOWED_TOOLS: tuple[str, ...] = (
+     "Bash(git add:*)", "Bash(git commit:*)",
+     "Bash(git checkout -b:*)", "Bash(git switch -c:*)",
+     "Bash(compass:*)", "Bash(ls:*)", "Bash(cat:*)",
++    "Bash(python3 -m mypy:*)", "Bash(python3 -m ruff:*)", "Bash(python3 -m coverage:*)",
+     "Bash(head:*)", "Bash(tail:*)", "Bash(grep:*)",
+     "Bash(.specify/scripts/bash/check-prerequisites.sh:*)",
+     "Bash(.specify/scripts/bash/setup-plan.sh:*)",
+@@ -1831,6 +1832,157 @@ def _maybe_send_continue_reply(claude_exe: str, common_args: list[str],
+     return replies_sent + 1, exit_code, text
+ 
+ 
++# --- sdd-bench multi-round runner (local lab patch, never pushed) -----------
++
++_SDD_MAX_ROUNDS = 8
++_SDD_MAX_APPROVALS = 8
++_SDD_QUALITY_ORDER = ("own_tests", "regression", "static", "coverage", "mutation",
++                      "conventions")
++
++_SDD_APPROVER_PROMPT = """You stand in for the product owner who asked for a change.
++You know only the request below. You are not a reviewer: you never add
++requirements, never comment on quality, and never suggest how to build it.
++
++The request was:
++<request>
++{request}
++</request>
++
++The engineer's latest message to you:
++<message>
++{message}
++</message>
++
++Decide one thing: has the engineer stopped before finishing the requested
++change to ask for approval, a sign-off or a decision? If the message says the
++change is done (even if it offers optional extras), it is not waiting.
++
++If it is waiting, write the reply a busy product owner would send:
++- approve what was proposed, unless it contradicts the request;
++- for a question with a recommended option, choose the recommended option;
++- with no recommendation, choose the simplest option consistent with the request;
++- sign off any approval or sign-off it asks for;
++- tell it to carry on to the finished, tested change.
++Keep the reply under 60 words.
++
++Answer with JSON only: {{"waiting": true or false, "reply": "..."}}"""
++
++
++def _sdd_approve(request: str, message: str) -> dict[str, Any]:
++    """The runner's approver: one short model call with no tools, in an
++    empty directory, that sees only the request and the session's last
++    message."""
++    with tempfile.TemporaryDirectory() as empty:
++        proc = subprocess.run(
++            ["claude", "-p", _SDD_APPROVER_PROMPT.format(request=request, message=message[-6000:]),
++             "--model", "sonnet", "--output-format", "json", "--tools", ""],
++            cwd=empty, capture_output=True, text=True, timeout=300)
++    cost = 0.0
++    try:
++        outer = json.loads(proc.stdout)
++        cost = float(outer.get("total_cost_usd") or 0.0)
++        body = outer.get("result", "")
++        body = body[body.index("{"):body.rindex("}") + 1]
++        decision = json.loads(body)
++        return {"waiting": bool(decision.get("waiting")),
++                "reply": str(decision.get("reply") or ""), "cost_usd": cost}
++    except (ValueError, KeyError, TypeError):
++        return {"waiting": False, "reply": "", "cost_usd": cost,
++                "error": (proc.stdout + proc.stderr)[-500:]}
++
++
++def _sdd_score(repo_dir: Path, scenario_dir: Path) -> dict[str, Any]:
++    root = Path(os.environ["SDD_BENCH_ROOT"])
++    with tempfile.TemporaryDirectory() as tmp:
++        tree = Path(tmp) / "t"
++        shutil.copytree(repo_dir, tree, ignore=shutil.ignore_patterns(
++            ".git", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache"))
++        out = Path(tmp) / "score.json"
++        subprocess.run([sys.executable, str(root / "tools" / "score.py"),
++                        "--scenario", scenario_dir.name, "--tree", str(tree),
++                        "--seed", str(scenario_dir / "seed"), "--json", str(out)],
++                       cwd=root, capture_output=True, text=True, timeout=1800)
++        return json.loads(out.read_text()) if out.exists() else {"at_target": False,
++                                                                 "parts": {}}
++
++
++def _sdd_next_report(scenario_dir: Path, score: dict[str, Any]) -> str:
++    import yaml
++    parts = score.get("parts", {})
++    criteria = parts.get("behaviour", {}).get("criteria", {})
++    for item in yaml.safe_load((scenario_dir / "feedback.yml").read_text()):
++        if not criteria.get(item["criterion"], False):
++            return str(item["report"])
++    quality = yaml.safe_load((scenario_dir.parent / "quality-feedback.yml").read_text())
++    for name in _SDD_QUALITY_ORDER:
++        part = parts.get(name, {})
++        if part and not part.get("pass"):
++            details = (part.get("findings") or part.get("missed") or part.get("survived")
++                       or part.get("problems") or [])
++            text = "\n".join(f"- {d}" for d in details[:15]) or "- (no detail)"
++            return str(quality[name]).replace("{details}", text)
++    return "Please check the change is complete and tested."
++
++
++def _sdd_multi_round(claude_exe: str, common_args: list[str], repo_dir: Path,
++                     state: dict[str, Any], *, scenario: dict[str, Any],
++                     scenario_dir: Path, budget_usd: float, env: dict[str, str],
++                     exit_code: int, final_text: str, clock_start: float
++                     ) -> tuple[int, str, dict[str, Any]]:
++    rounds: list[dict[str, Any]] = []
++    approvals: list[dict[str, Any]] = []
++    approver_cost = 0.0
++    stop = "max rounds"
++    for round_no in range(1, _SDD_MAX_ROUNDS + 1):
++        for _ in range(_SDD_MAX_APPROVALS):
++            decision = _sdd_approve(scenario["prompt"], final_text or "")
++            approver_cost += decision["cost_usd"]
++            remaining = round(budget_usd - state["cost_usd"], 6)
++            if not decision["waiting"] or remaining <= 0:
++                break
++            approvals.append({"round": round_no, "asked": (final_text or "")[-1500:],
++                              "reply": decision["reply"]})
++            exit_code, text = _invoke_claude(
++                claude_exe, decision["reply"], common_args, repo_dir, state,
++                resume=state["session_id"], remaining_budget=remaining, env=env)
++            if text:
++                final_text = text
++        score = _sdd_score(repo_dir, scenario_dir)
++        parts = score.get("parts", {})
++        rounds.append({
++            "round": round_no, "at_target": bool(score.get("at_target")),
++            "behaviour_met": parts.get("behaviour", {}).get("met"),
++            "behaviour_of": parts.get("behaviour", {}).get("of"),
++            "parts_not_met": [k for k, v in parts.items() if not v.get("pass")],
++            "criteria_not_met": [k for k, v in parts.get("behaviour", {}).get("criteria", {}).items() if not v],
++            "cost_usd": round(state["cost_usd"], 6), "tokens": state["tokens"],
++            "seconds": round(time.monotonic() - clock_start, 1),
++            "approvals_so_far": len(approvals)})
++        if score.get("at_target"):
++            stop = "at target"
++            break
++        remaining = round(budget_usd - state["cost_usd"], 6)
++        if remaining <= 0:
++            stop = "budget"
++            break
++        if round_no == _SDD_MAX_ROUNDS:
++            break
++        report = _sdd_next_report(scenario_dir, score)
++        sent = [r.get("feedback_sent") for r in rounds[:-1]]
++        if len(sent) >= 3 and sent[-3:] == [report] * 3:
++            stop = "stuck"
++            break
++        rounds[-1]["feedback_sent"] = report
++        exit_code, text = _invoke_claude(
++            claude_exe, report, common_args, repo_dir, state,
++            resume=state["session_id"], remaining_budget=remaining, env=env)
++        if text:
++            final_text = text
++    return exit_code, final_text, {"stop": stop, "rounds": rounds, "approvals": approvals,
++                                   "approver_cost_usd": round(approver_cost, 6)}
++
++
++
+ def _diff_since_seed(repo_dir: Path, seed_commit: str, env: dict[str, str],
+                       seed_git_snapshot: dict[str, bytes | None],
+                       tampered_paths: list[str]
+@@ -2261,6 +2413,7 @@ def run_once(scenario: dict[str, Any], scenario_dir: Path, condition: str,
+     exit_code = 0
+     skipped_for_budget = False
+     replies_sent = 0
++    multi_round: dict[str, Any] | None = None
+     record_cwd: str | None = None
+ 
+     claude_version = _claude_version(claude_exe, child_env)
+@@ -2302,46 +2455,59 @@ def run_once(scenario: dict[str, Any], scenario_dir: Path, condition: str,
+ 
+         common_args = _common_claude_args(condition, plugin_copy_dir, framework_copy_dir,
+                                            r1_scripts_dir)
+-        budget_usd = float(scenario["budget_usd"])
++        budget_usd = float(os.environ.get("SDD_RUN_BUDGET") or scenario["budget_usd"])
+ 
+-        remaining = round(budget_usd - state["cost_usd"], 6)
+-        exit_code, text = _invoke_claude(
+-            claude_exe, scenario["prompt"], common_args, repo_dir, state,
+-            resume=None, remaining_budget=remaining, env=child_env)
+-        if text:
+-            final_text = text
+-        replies_sent, reply_exit, reply_text = _maybe_send_continue_reply(
+-            claude_exe, common_args, repo_dir, state, scenario=scenario,
+-            budget_usd=budget_usd, replies_sent=replies_sent, env=child_env,
+-            seed_commit=seed_commit, seed_git_snapshot=seed_git_snapshot,
+-            tampered_paths=tampered_paths)
+-        if reply_exit is not None:
+-            exit_code = reply_exit
+-        if reply_text:
+-            final_text = reply_text
+-
+-        for follow_up in scenario.get("follow_ups") or []:
++        if os.environ.get("SDD_BENCH_ROOT"):
+             remaining = round(budget_usd - state["cost_usd"], 6)
+-            if remaining <= 0:
+-                skipped_for_budget = True
+-                break
+             exit_code, text = _invoke_claude(
+-                claude_exe, follow_up, common_args, repo_dir, state,
+-                resume=state["session_id"], remaining_budget=remaining,
+-                env=child_env)
++                claude_exe, scenario["prompt"], common_args, repo_dir, state,
++                resume=None, remaining_budget=remaining, env=child_env)
++            if text:
++                final_text = text
++            exit_code, final_text, multi_round = _sdd_multi_round(
++                claude_exe, common_args, repo_dir, state, scenario=scenario,
++                scenario_dir=scenario_dir, budget_usd=budget_usd, env=child_env,
++                exit_code=exit_code, final_text=final_text, clock_start=clock_start)
++        else:
++            multi_round = None
++            remaining = round(budget_usd - state["cost_usd"], 6)
++            exit_code, text = _invoke_claude(
++                claude_exe, scenario["prompt"], common_args, repo_dir, state,
++                resume=None, remaining_budget=remaining, env=child_env)
+             if text:
+                 final_text = text
+             replies_sent, reply_exit, reply_text = _maybe_send_continue_reply(
+                 claude_exe, common_args, repo_dir, state, scenario=scenario,
+-                budget_usd=budget_usd, replies_sent=replies_sent,
+-                env=child_env, seed_commit=seed_commit,
+-                seed_git_snapshot=seed_git_snapshot,
++                budget_usd=budget_usd, replies_sent=replies_sent, env=child_env,
++                seed_commit=seed_commit, seed_git_snapshot=seed_git_snapshot,
+                 tampered_paths=tampered_paths)
+             if reply_exit is not None:
+                 exit_code = reply_exit
+             if reply_text:
+                 final_text = reply_text
+ 
++            for follow_up in scenario.get("follow_ups") or []:
++                remaining = round(budget_usd - state["cost_usd"], 6)
++                if remaining <= 0:
++                    skipped_for_budget = True
++                    break
++                exit_code, text = _invoke_claude(
++                    claude_exe, follow_up, common_args, repo_dir, state,
++                    resume=state["session_id"], remaining_budget=remaining,
++                    env=child_env)
++                if text:
++                    final_text = text
++                replies_sent, reply_exit, reply_text = _maybe_send_continue_reply(
++                    claude_exe, common_args, repo_dir, state, scenario=scenario,
++                    budget_usd=budget_usd, replies_sent=replies_sent,
++                    env=child_env, seed_commit=seed_commit,
++                    seed_git_snapshot=seed_git_snapshot,
++                    tampered_paths=tampered_paths)
++                if reply_exit is not None:
++                    exit_code = reply_exit
++                if reply_text:
++                    final_text = reply_text
++
+         state["tool_calls"].sort(key=lambda call: call["index"])
+         _finalise_tool_calls(state)
+         diff_text, changed_paths, changed = _diff_since_seed(
+@@ -2438,6 +2604,7 @@ def run_once(scenario: dict[str, Any], scenario_dir: Path, condition: str,
+         "exit_code": exit_code,
+         "cost_usd": round(state["cost_usd"], 6),
+         "tokens": state["tokens"],
++        "multi_round": multi_round,
+         "session_id": state["session_id"],
+         "cwd": record_cwd,
+         "model": state["model"],
+-- 
+2.43.0
+

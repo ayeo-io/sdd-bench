@@ -6,7 +6,7 @@
 - criterion: I5
   report: "Incident: the database failed part-way through saving an order. When the client retried, the customer ended up with two orders."
 - criterion: I6
-  report: "Security review: a client reused a request id for a different basket, and it silently got back somebody else's earlier order."
+  report: "Security review: when a request id is reused for a different order, or by a different customer, the caller can get back an order that isn't the one it asked for."
 - criterion: I7
   report: "Support ticket: an order was rejected for a bad amount. The client fixed the amount and retried with the same request id, and it still didn't go through."
 - criterion: I9
