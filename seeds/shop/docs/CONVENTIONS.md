@@ -23,7 +23,8 @@
 
 Code here is production code. A change is done when:
 
-- `mypy --strict shop` and `ruff check .` (rules in `ruff.toml`) report nothing;
+- `python3 -m mypy --strict shop` and `python3 -m ruff check .` (rules in
+  `ruff.toml`) report nothing;
 - every public class and function says what it does in a docstring;
 - the change comes with tests that run every new line and branch, error
   paths included, and that would fail if the new behaviour broke;

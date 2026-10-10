@@ -1,7 +1,7 @@
 # Shared reports for the quality parts. {details} is the score's findings.
 own_tests: "CI is red: the test suite fails. Log:\n{details}"
 regression: "CI is red: tests that passed before this change now fail."
-static: "CI is red: the lint and type checks (ruff check, mypy --strict shop) fail on the new code:\n{details}"
+static: "CI is red: the lint and type checks (python3 -m ruff check ., python3 -m mypy --strict shop) fail on the new code:\n{details}"
 coverage: "Review comment: some of the new code is never run by any test, so we can't tell it works:\n{details}"
 mutation: "Review comment: the tests would still pass if parts of the new code were broken. For example, they still pass with:\n{details}"
 conventions: "Review comment: this breaks the project conventions in docs/CONVENTIONS.md:\n{details}"
