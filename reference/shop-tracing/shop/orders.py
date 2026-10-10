@@ -1,0 +1,48 @@
+"""The order service: what each customer has bought."""
+
+from __future__ import annotations
+
+import itertools
+import uuid
+from typing import Any
+
+from shop.bus import Bus
+from shop.errors import UnknownUser
+from shop.log import log
+from shop.store import Store
+
+_ids = itertools.count(1)
+
+
+class OrderService:
+    def __init__(self, bus: Bus) -> None:
+        self.bus = bus
+        self.store = Store()
+        self.known_users: set[str] = set()
+        bus.subscribe("user.created", self._on_user_created)
+
+    def _on_user_created(self, message: dict[str, Any]) -> None:
+        user_id = message["payload"]["user_id"]
+        self.known_users.add(user_id)
+        log("orders", "user.known", user_id=user_id,
+            trace_id=message["headers"].get("trace_id"))
+
+    def create_order(self, user_id: str, amount_pence: int,
+                     trace_id: str | None = None) -> str:
+        trace_id = trace_id or uuid.uuid4().hex
+        if user_id not in self.known_users:
+            raise UnknownUser(user_id)
+        if not isinstance(amount_pence, int) or amount_pence <= 0:
+            raise ValueError("amount_pence must be a positive whole number of pence")
+        order_id = f"o{next(_ids)}"
+        self.store.put(order_id, {"user_id": user_id, "amount_pence": amount_pence})
+        log("orders", "order.created", order_id=order_id, user_id=user_id,
+            trace_id=trace_id)
+        self.bus.publish("order.created", {"order_id": order_id, "user_id": user_id,
+                                           "amount_pence": amount_pence},
+                         {"trace_id": trace_id})
+        return order_id
+
+    def orders_for(self, user_id: str) -> list[dict[str, Any]]:
+        return [{"order_id": k, **v} for k, v in self.store.items()
+                if v["user_id"] == user_id]

@@ -1,0 +1,10 @@
+id: shop-idempotency
+prompt: |
+  Clients retry create_order in shop/orders.py when a request times out,
+  and we have seen duplicate orders. Let create_order take an optional
+  request_id: a retry with the same request_id must not create a second
+  order, and must return the same order id as the first call.
+budget_usd: 3.0
+hidden_command: python3 -m pytest tests/test_hidden_idempotency.py -q
+continue_reply: Go ahead with whichever option you recommend.
+expected_route: quick-fix

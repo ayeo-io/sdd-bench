@@ -1,0 +1,12 @@
+id: shop-tracing
+prompt: |
+  We cannot follow one request through the shop. Add a trace id:
+  create_user and create_order take an optional trace_id (make one up
+  when none is given). Every log record written while handling that
+  request, in any service, and every event published because of it, must
+  carry the same trace id - as trace_id in log records, and as
+  headers["trace_id"] in events.
+budget_usd: 3.0
+hidden_command: python3 -m pytest tests/test_hidden_tracing.py -q
+continue_reply: Go ahead with whichever option you recommend.
+expected_route: regular

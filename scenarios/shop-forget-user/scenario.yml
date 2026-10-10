@@ -1,0 +1,10 @@
+id: shop-forget-user
+prompt: |
+  A customer has asked us to forget them. Add UserService.delete_user(user_id).
+  Their orders and subscriptions must be deleted too. Each service has its
+  own store, so this cannot be one transaction, and the user service must
+  not need to know which other services hold data about a user.
+budget_usd: 5.0
+hidden_command: python3 -m pytest tests/test_hidden_forget_user.py -q
+continue_reply: Go ahead with whichever option you recommend.
+expected_route: full
