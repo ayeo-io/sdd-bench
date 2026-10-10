@@ -10,6 +10,9 @@
 - A handler that cannot finish should raise, so the bus delivers the
   message again. It must not swallow the error.
 - Amounts are whole pence (`int`). Never floats.
+- An operation on an id the service does not know raises `UnknownUser`,
+  as `get_user` does. It never succeeds quietly, so a mistyped or stale id
+  is always reported.
 - Personal data is a user's name and email. It lives only in the user
   service's store. It never goes into the log, the audit trail or an
   event.
