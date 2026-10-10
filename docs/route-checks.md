@@ -19,3 +19,10 @@ Every session was contained. Total $16.08.
 - **All three scenarios route as intended.** They can be used to compare routes.
 - **shop-forget-user cannot be finished under the full route with one reply.** The full route stops at checkpoints for a person (after the acceptance criteria, for example), and the harness sends one reply. Every Compass session ended before writing code, so 0 of 32 hidden tests passed. One session also stopped earlier, waiting for approval of a command. This is a limit of the runner, not of the scenario: bare finished it and passed 8 of 8. Until the runner can answer more than one checkpoint, results on this scenario measure where a framework stops, not what it builds.
 - **The regular route cost about 9 times bare on shop-tracing,** for the same hidden-test result. This is a first reading at 4 runs and 1 bare run, not a comparison result.
+
+## Seed changes since
+
+On 10 Oct, after these checks, the seed gained the quality bar in
+`docs/CONVENTIONS.md`, docstrings, `ruff.toml`, and two store features
+(`fail_write_after`, `rows_read`). Routes should be checked again on the
+first multi-round run.

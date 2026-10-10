@@ -9,8 +9,9 @@ It lives apart from any framework it measures, so the scenarios cannot be tuned 
 ```
 seeds/shop/        a small codebase shared by several scenarios
 scenarios/<id>/    one task each: scenario.yml, a copy of the seed, hidden tests
-reference/<id>/    a known-good solution, used only to check the scenario
-tools/             checks that keep the scenarios honest
+reference/<id>/    a known-good solution that reaches the target, with its tests
+tools/             the checker and the scorer
+docs/              the shared quality bar, feedback rules, results
 ```
 
 ### The shop seed
@@ -27,7 +28,23 @@ Three services - users, orders and subscriptions - that share nothing but an in-
 
 Each scenario's `expected_route` is a check on the scenario, not a score: a scenario stays in the suite only while most runs take that route (see `docs/route-checks.md`).
 
-Hidden tests are copied in only after the session ends. They cover what a careful engineer would catch, such as a retry after a failed first attempt, two requests handled together, a duplicate message or a late write after a deletion.
+Hidden tests are copied in only after the session ends.
+
+## What good looks like
+
+Each scenario has a `target.md`: the behaviours production code needs, as Given/When/Then with ids, error cases included. Every scenario also has the shared quality part in `docs/target-quality.md`: strict typing, lint, docstrings, tests that run every new line and fail when the new behaviour breaks, and the seed's conventions. `tools/score.py` checks a finished tree against all of it:
+
+```
+python3 tools/score.py --scenario shop-tracing --tree /path/to/finished/tree
+```
+
+A tree is at target only when every behaviour and every quality part passes. The reference solutions are at target, so the bar is reachable.
+
+## Iterating to the target
+
+One attempt is not how people work. A multi-round run scores the tree after each round and, if it is short of the target, sends the session one scripted report from the scenario's `feedback.yml`, written as a tester, reviewer or user would raise it, never naming a hidden test (`docs/feedback.md`). The measure is whether a framework reaches the target, in how many rounds, and at what total cost. The multi-round runner is the next piece of work; until it exists, scores are first-round only (`docs/rescore-2026-10-10.md`).
+
+Hidden tests, targets and feedback live outside `seed/`, so a session never sees them. They cover what a careful engineer would catch, such as a retry after a failed first attempt, two requests handled together, a duplicate message or a late write after a deletion.
 
 ## Checking the scenarios
 
@@ -35,7 +52,7 @@ Hidden tests are copied in only after the session ends. They cover what a carefu
 python3 tools/check_scenarios.py --sync
 ```
 
-This copies the shared seed into each scenario, then checks that the seed's own tests pass, that the hidden tests fail on the untouched seed, and that they pass with the reference solution. Run it after any change to a seed, a hidden test or a reference.
+This copies the shared seed into each scenario, then checks that the seed's own tests pass, that the hidden tests fail on the untouched seed, and that they pass with the reference solution. Run it after any change to a seed, a hidden test or a reference, along with `tools/score.py` on each reference. Tools: `pip install -r tools/requirements.txt`.
 
 ## Running a scenario
 

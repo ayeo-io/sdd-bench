@@ -13,10 +13,14 @@ from shop.store import Store
 
 
 class SubscriptionService:
+    """Holds mailing-list memberships. Learns which users exist from `user.created`."""
+
     def __init__(self, bus: Bus) -> None:
         self.bus = bus
         self.store = Store()
         self.known_users: set[str] = set()
+        # Ids of deleted users, never personal data: a late or repeated
+        # user.created must not bring a deleted user back.
         self.forgotten: set[str] = set()
         bus.subscribe("user.created", self._on_user_created)
         bus.subscribe("user.deleted", self._on_user_deleted)
@@ -28,7 +32,10 @@ class SubscriptionService:
         self.known_users.add(user_id)
         self.subscribe(user_id, "news")
 
+
     def _on_user_deleted(self, message: dict[str, Any]) -> None:
+        """Delete everything held about a deleted user. Safe to repeat; a
+        failure raises so the bus delivers the message again."""
         user_id = message["payload"]["user_id"]
         self.forgotten.add(user_id)
         self.known_users.discard(user_id)
@@ -36,8 +43,9 @@ class SubscriptionService:
             if row["user_id"] == user_id:
                 self.store.delete(key)
         audit.record("subscriptions.deleted", service="subscriptions", user_id=user_id)
-
+        log("subscriptions", "user.forgotten", user_id=user_id)
     def subscribe(self, user_id: str, list_name: str) -> None:
+        """Put the user on a list and announce it. Raises UnknownUser."""
         if user_id not in self.known_users:
             raise UnknownUser(user_id)
         self.store.put(f"{user_id}:{list_name}", {"user_id": user_id, "list": list_name})
@@ -45,4 +53,5 @@ class SubscriptionService:
         self.bus.publish("subscription.created", {"user_id": user_id, "list": list_name})
 
     def lists_for(self, user_id: str) -> list[str]:
+        """The lists the user is on, in name order."""
         return [v["list"] for _, v in self.store.items() if v["user_id"] == user_id]

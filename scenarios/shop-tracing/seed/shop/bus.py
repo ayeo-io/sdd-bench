@@ -24,6 +24,8 @@ Handler = Callable[[dict[str, Any]], None]
 
 
 class Bus:
+    """Topics, their handlers, and the messages waiting to be delivered."""
+
     def __init__(self) -> None:
         self._handlers: dict[str, list[Handler]] = {}
         self._pending: list[tuple[dict[str, Any], Handler]] = []
@@ -31,10 +33,12 @@ class Bus:
         self.published: list[dict[str, Any]] = []
 
     def subscribe(self, topic: str, handler: Handler) -> None:
+        """Deliver every later message on `topic` to `handler`."""
         self._handlers.setdefault(topic, []).append(handler)
 
     def publish(self, topic: str, payload: dict[str, Any],
                 headers: dict[str, Any] | None = None) -> None:
+        """Queue a message for every handler subscribed to `topic`."""
         message = {"topic": topic, "payload": dict(payload),
                    "headers": dict(headers or {})}
         self.published.append(message)
@@ -42,6 +46,7 @@ class Bus:
             self._pending.append((message, handler))
 
     def pending_count(self) -> int:
+        """How many deliveries are waiting."""
         return len(self._pending)
 
     def run_pending(self) -> None:
@@ -61,5 +66,6 @@ class Bus:
         self._pending = failed
 
     def deliver_again(self) -> None:
+        """Queue every delivered message again, as a duplicate."""
         self._pending.extend(self._delivered)
         self._delivered = []

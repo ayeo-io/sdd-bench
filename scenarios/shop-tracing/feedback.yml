@@ -1,0 +1,14 @@
+- criterion: T1
+  report: "Ops: I searched the logs for one request's trace id and found the user service's line but nothing from orders or subscriptions."
+- criterion: T3
+  report: "Ops: two sign-ups at the same moment got their trace ids mixed up: one customer's subscription lines carry the other's trace."
+- criterion: T5
+  report: "Ops: after the subscriptions database hiccup, the retried messages were logged under a different trace id, so the trail breaks."
+- criterion: T6
+  report: "Ops: messages from the old importer have no trace id, and everything logged while handling them has none either."
+- criterion: T2
+  report: "Ops: requests that come in without a trace id are logged with an empty or missing trace, so they can't be followed."
+- criterion: T4
+  report: "Ops: order lines in the log and the order.created event don't carry the same trace id."
+- criterion: T7
+  report: "Regression: existing callers that don't pass a trace id are broken."

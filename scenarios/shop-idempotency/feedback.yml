@@ -1,0 +1,19 @@
+# Bug reports, in the order they are sent. First unmet one wins.
+- criterion: I1
+  report: "Support ticket: a customer's app retried an order after a timeout and they now have two identical orders."
+- criterion: I4
+  report: "Incident: during last night's database blip, an order failed on the first try and the client's retry didn't go through either."
+- criterion: I5
+  report: "Incident: the database failed part-way through saving an order. When the client retried, the customer ended up with two orders."
+- criterion: I6
+  report: "Security review: a client reused a request id for a different basket, and it silently got back somebody else's earlier order."
+- criterion: I7
+  report: "Support ticket: an order was rejected for a bad amount. The client fixed the amount and retried with the same request id, and it still didn't go through."
+- criterion: I9
+  report: "Performance alert: since request ids went live, creating an order reads every order in the store. It will fall over as orders grow."
+- criterion: I2
+  report: "Support ticket: a customer placed two different orders with two request ids and only one was saved."
+- criterion: I3
+  report: "Regression: clients that don't send a request id now get the same order back for a second, separate purchase."
+- criterion: I8
+  report: "Bug: the order history shows entries that are not orders."

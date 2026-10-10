@@ -9,8 +9,10 @@ RECORDS: list[dict[str, Any]] = []
 
 
 def log(service: str, event: str, **fields: Any) -> None:
+    """Write one log record."""
     RECORDS.append({"service": service, "event": event, **fields})
 
 
 def clear() -> None:
+    """Forget every record. For tests."""
     RECORDS.clear()

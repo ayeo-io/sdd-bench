@@ -1,0 +1,22 @@
+- criterion: F1
+  report: "Data protection officer: we deleted a customer on request, and their orders and mailing-list entries are still there."
+- criterion: F10
+  report: "Incident: the user database failed during a deletion. The other services deleted the customer's orders anyway, but the customer still exists."
+- criterion: F4
+  report: "Incident: the orders database blipped during a deletion, and that customer's orders were never deleted."
+- criterion: F9
+  report: "Data protection officer: a customer we deleted reappeared on the newsletter list a minute later, after a delayed sign-up message came through."
+- criterion: F7
+  report: "Bug: a late order came in for a deleted customer and was accepted, so we now hold their data again."
+- criterion: F5
+  report: "Incident: the bus delivered a deletion twice and the second one errored and got stuck in the queue."
+- criterion: F8
+  report: "Audit: we can't show every service deleted the customer's data, and the audit trail or logs contain the customer's name or email."
+- criterion: F6
+  report: "Architecture review: the user service has to know every service that holds user data. Adding a fourth one would mean changing it."
+- criterion: F3
+  report: "Bug: deleting a customer id that doesn't exist reports success."
+- criterion: F11
+  report: "Bug: deleting the same customer twice reports success the second time."
+- criterion: F2
+  report: "Incident: deleting one customer removed data belonging to another."

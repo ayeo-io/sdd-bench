@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import itertools
-import uuid
 from typing import Any
 
+from shop import tracing
 from shop.bus import Bus
 from shop.errors import UnknownUser
 from shop.log import log
@@ -15,6 +15,8 @@ _ids = itertools.count(1)
 
 
 class OrderService:
+    """Holds orders. Learns which users exist from `user.created`."""
+
     def __init__(self, bus: Bus) -> None:
         self.bus = bus
         self.store = Store()
@@ -24,25 +26,33 @@ class OrderService:
     def _on_user_created(self, message: dict[str, Any]) -> None:
         user_id = message["payload"]["user_id"]
         self.known_users.add(user_id)
-        log("orders", "user.known", user_id=user_id,
-            trace_id=message["headers"].get("trace_id"))
+        log("orders", "user.known", user_id=user_id, trace_id=tracing.from_message(message))
 
     def create_order(self, user_id: str, amount_pence: int,
                      trace_id: str | None = None) -> str:
-        trace_id = trace_id or uuid.uuid4().hex
+        """Record an order and announce it with `order.created`. Returns the order id.
+
+        `trace_id` follows the request into the log and the event; a fresh
+        one is made when none is given.
+
+        Raises UnknownUser for a user this service has not heard of, and
+        ValueError unless the amount is a positive whole number of pence.
+        """
         if user_id not in self.known_users:
             raise UnknownUser(user_id)
         if not isinstance(amount_pence, int) or amount_pence <= 0:
             raise ValueError("amount_pence must be a positive whole number of pence")
+        trace_id = tracing.ensure(trace_id)
         order_id = f"o{next(_ids)}"
         self.store.put(order_id, {"user_id": user_id, "amount_pence": amount_pence})
         log("orders", "order.created", order_id=order_id, user_id=user_id,
             trace_id=trace_id)
         self.bus.publish("order.created", {"order_id": order_id, "user_id": user_id,
                                            "amount_pence": amount_pence},
-                         {"trace_id": trace_id})
+                         tracing.headers(trace_id))
         return order_id
 
     def orders_for(self, user_id: str) -> list[dict[str, Any]]:
+        """Every order the user has made, oldest first."""
         return [{"order_id": k, **v} for k, v in self.store.items()
                 if v["user_id"] == user_id]

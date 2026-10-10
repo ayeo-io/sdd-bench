@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import itertools
-import uuid
 from typing import Any
 
+from shop import tracing
 from shop.bus import Bus
 from shop.errors import UnknownUser
 from shop.log import log
@@ -15,19 +15,27 @@ _ids = itertools.count(1)
 
 
 class UserService:
+    """Holds each user's name and email, the only personal data in the shop."""
+
     def __init__(self, bus: Bus) -> None:
         self.bus = bus
         self.store = Store()
 
     def create_user(self, name: str, email: str, trace_id: str | None = None) -> str:
-        trace_id = trace_id or uuid.uuid4().hex
+        """Add a user and announce it with `user.created`. Returns the user id.
+
+        `trace_id` follows the request into every log record and event it
+        causes; a fresh one is made when none is given.
+        """
+        trace_id = tracing.ensure(trace_id)
         user_id = f"u{next(_ids)}"
         self.store.put(user_id, {"name": name, "email": email})
         log("users", "user.created", user_id=user_id, trace_id=trace_id)
-        self.bus.publish("user.created", {"user_id": user_id}, {"trace_id": trace_id})
+        self.bus.publish("user.created", {"user_id": user_id}, tracing.headers(trace_id))
         return user_id
 
     def get_user(self, user_id: str) -> dict[str, Any]:
+        """Return the user's id, name and email. Raises UnknownUser."""
         row = self.store.get(user_id)
         if row is None:
             raise UnknownUser(user_id)

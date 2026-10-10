@@ -12,6 +12,8 @@ from shop.users import UserService
 
 @dataclass
 class Shop:
+    """The three services and the bus they share."""
+
     bus: Bus
     users: UserService
     orders: OrderService
@@ -19,6 +21,7 @@ class Shop:
 
 
 def build() -> Shop:
+    """A fresh shop with empty stores."""
     bus = Bus()
     return Shop(bus=bus, users=UserService(bus), orders=OrderService(bus),
                 subscriptions=SubscriptionService(bus))

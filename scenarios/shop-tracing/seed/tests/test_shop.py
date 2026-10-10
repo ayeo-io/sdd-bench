@@ -57,3 +57,30 @@ def test_get_user_of_an_unknown_id_raises():
     shop = build()
     with pytest.raises(UnknownUser):
         shop.users.get_user("u-missing")
+
+
+def test_a_write_can_fail_after_some_succeed():
+    shop = build()
+    uid = shop.users.create_user("Ada", "ada@example.org")
+    shop.bus.run_pending()
+    shop.orders.store.fail_write_after(1)
+    shop.orders.create_order(uid, 100)
+    with pytest.raises(StoreError):
+        shop.orders.create_order(uid, 200)
+    assert [o["amount_pence"] for o in shop.orders.orders_for(uid)] == [100]
+
+
+def test_the_store_counts_rows_read():
+    shop = build()
+    uid = shop.users.create_user("Ada", "ada@example.org")
+    shop.bus.run_pending()
+    store = shop.users.store
+    before = store.rows_read
+    store.get(uid)
+    store.get("missing")
+    assert store.rows_read == before + 1
+    shop.orders.create_order(uid, 100)
+    shop.orders.create_order(uid, 200)
+    before = shop.orders.store.rows_read
+    shop.orders.orders_for(uid)
+    assert shop.orders.store.rows_read == before + 2

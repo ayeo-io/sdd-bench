@@ -14,6 +14,8 @@ _ids = itertools.count(1)
 
 
 class OrderService:
+    """Holds orders. Learns which users exist from `user.created`."""
+
     def __init__(self, bus: Bus) -> None:
         self.bus = bus
         self.store = Store()
@@ -26,6 +28,11 @@ class OrderService:
         log("orders", "user.known", user_id=user_id)
 
     def create_order(self, user_id: str, amount_pence: int) -> str:
+        """Record an order and announce it with `order.created`. Returns the order id.
+
+        Raises UnknownUser for a user this service has not heard of, and
+        ValueError unless the amount is a positive whole number of pence.
+        """
         if user_id not in self.known_users:
             raise UnknownUser(user_id)
         if not isinstance(amount_pence, int) or amount_pence <= 0:
@@ -38,5 +45,6 @@ class OrderService:
         return order_id
 
     def orders_for(self, user_id: str) -> list[dict[str, Any]]:
+        """Every order the user has made, oldest first."""
         return [{"order_id": k, **v} for k, v in self.store.items()
                 if v["user_id"] == user_id]

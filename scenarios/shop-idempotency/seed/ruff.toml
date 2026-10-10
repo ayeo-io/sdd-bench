@@ -1,0 +1,13 @@
+# The house quality bar. A change is held to it on the code it adds.
+line-length = 100
+target-version = "py310"
+
+[lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF", "C90", "PL", "BLE", "TRY", "S", "D101", "D102", "D103", "D106"]
+ignore = ["S101", "PLR2004", "TRY003"]
+
+[lint.per-file-ignores]
+"tests/*" = ["D", "S", "PLR"]
+
+[lint.mccabe]
+max-complexity = 8
