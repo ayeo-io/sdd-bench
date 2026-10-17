@@ -1,0 +1,10 @@
+# Code owners for this repository.
+#
+# GitHub requests a review from the owner on any pull request that touches a
+# matching path. The catch-all rule gives every file a named owner, including
+# workflows, agent instruction files (AGENTS.md, CLAUDE.md, SKILL.md) and this
+# file itself.
+#
+# Docs: https://docs.github.com/repositories/managing-your-repositorys-settings-and-security/customizing-your-repository/about-code-owners
+
+* @jed72
