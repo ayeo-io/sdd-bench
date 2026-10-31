@@ -1,8 +1,12 @@
 #!/bin/bash
-# Run the sdd-bench pilot on Compass 8.x: 2 runs per arm (bare, Compass) for
-# each of the 4 scenarios, 16 runs, interleaved arm by arm, each with a
-# spending cap. After each Compass run, tools/check_record.py checks the
-# record the run left behind.
+# Run the sdd-bench pilot on Compass 8.x, 12 runs in this order:
+#   bare:    2 runs on each of the 4 scenarios (run 1 of each, then run 2);
+#   Compass: 2 runs on shop-idempotency, 1 on shop-change-email,
+#            1 on shop-forget-user.
+# There is no Compass run on shop-tracing (docs/pilot-8x.md says why).
+# Each run has a spending cap, and the script starts no new run once the
+# total reaches PILOT_STOP_USD. After each Compass run, tools/check_record.py
+# checks the record the run left behind.
 #
 # Every run calls a model and costs money. Read the cost estimate in
 # docs/pilot-8x.md before you start it.
@@ -19,7 +23,7 @@
 #   PY            the python3 that has pytest, mypy, ruff, coverage and pyyaml
 #                 (default: python3 on PATH)
 #   PILOT_STOP_USD  start no new run once the runs so far have spent this
-#                 much, session plus approver (default 80, the approved top)
+#                 much, session plus approver (default 80, the approved budget)
 #
 # A run that already has a DONE file is skipped, so the script can be started
 # again after a stop.
@@ -34,13 +38,19 @@ PILOT_STOP_USD=${PILOT_STOP_USD:-80}
 DRY=0
 [ "${1:-}" = "--dry-run" ] && DRY=1
 
-SCENARIOS=(shop-idempotency shop-tracing shop-forget-user shop-change-email)
-ARMS=(bare compass)
-RUNS=(1 2)
+# The runs, in order: "<arm> <scenario> <run number>".
+PLAN=(
+  "bare shop-idempotency 1" "bare shop-tracing 1" "bare shop-forget-user 1"
+  "bare shop-change-email 1"
+  "bare shop-idempotency 2" "bare shop-tracing 2" "bare shop-forget-user 2"
+  "bare shop-change-email 2"
+  "compass shop-idempotency 1" "compass shop-idempotency 2"
+  "compass shop-change-email 1" "compass shop-forget-user 1"
+)
 
 # Caps in dollars per run, for the session. Bare: about 3 times its largest
-# past spend. Compass: what the approved budget allows; on shop-tracing the
-# cap can decide reach, as it did in the cost-spike baseline.
+# past spend. Compass: about its largest past spend, so one run cannot take
+# most of the budget.
 cap() {
   case "$1:$2" in
     bare:shop-idempotency) echo 5 ;;
@@ -48,9 +58,9 @@ cap() {
     bare:shop-forget-user) echo 9 ;;
     bare:shop-change-email) echo 5 ;;
     compass:shop-idempotency) echo 6 ;;
-    compass:shop-tracing) echo 50 ;;
     compass:shop-forget-user) echo 30 ;;
     compass:shop-change-email) echo 30 ;;
+    *) echo "no cap for $1 $2" >&2; exit 2 ;;
   esac
 }
 
@@ -104,40 +114,37 @@ if [ $DRY = 0 ]; then
   } > "$PILOT_OUT/PILOT.yml"
 fi
 
-for r in "${RUNS[@]}"; do
-  for s in "${SCENARIOS[@]}"; do
-    for arm in "${ARMS[@]}"; do
-      dir=$PILOT_OUT/runs/$s-$arm-r$r
-      [ -e "$dir/DONE" ] && { echo "skip $s $arm r$r (done)"; continue; }
-      c=$(cap "$arm" "$s")
-      if [ $DRY = 1 ]; then
-        say "cd $RUNNER && SDD_BENCH_ROOT=$BENCH SDD_RUN_BUDGET=$c" \
-            "SDD_KEEP_WORKSPACE=$dir/workspace $PY evals/harness.py" \
-            "--scenario $BENCH/scenarios/$s --condition $arm --runs 1" \
-            "--out $dir --plugin-source $PLUGIN"
-        [ "$arm" = compass ] && say "$PY $BENCH/tools/check_record.py" \
-            "--workspace $dir/workspace/$s-compass-1 --json $dir/check.json"
-        continue
-      fi
-      so_far=$(spent)
-      if "$PY" -c "import sys; sys.exit(float('$so_far') < float('$PILOT_STOP_USD'))"; then
-        echo "stop: \$$so_far spent, at or over PILOT_STOP_USD \$$PILOT_STOP_USD"
-        break 3
-      fi
-      rm -rf "$dir" && mkdir -p "$dir"
-      echo "start $s $arm r$r cap \$$c, \$$so_far spent so far $(date '+%T')"
-      (cd "$RUNNER" && SDD_BENCH_ROOT=$BENCH SDD_RUN_BUDGET=$c \
-         SDD_KEEP_WORKSPACE=$dir/workspace "$PY" evals/harness.py \
-         --scenario "$BENCH/scenarios/$s" --condition "$arm" --runs 1 \
-         --out "$dir" --plugin-source "$PLUGIN") > "$dir/run.log" 2>&1
-      code=$?
-      if [ "$arm" = compass ] && [ -d "$dir/workspace/$s-compass-1" ]; then
-        "$PY" "$BENCH/tools/check_record.py" --workspace "$dir/workspace/$s-compass-1" \
-          --json "$dir/check.json" > "$dir/check.txt" 2>&1
-      fi
-      echo "exit $code $(date -u '+%FT%TZ')" > "$dir/DONE"
-    done
-  done
+for entry in "${PLAN[@]}"; do
+  read -r arm s r <<< "$entry"
+  dir=$PILOT_OUT/runs/$s-$arm-r$r
+  [ -e "$dir/DONE" ] && { echo "skip $s $arm r$r (done)"; continue; }
+  c=$(cap "$arm" "$s") || exit 2
+  if [ $DRY = 1 ]; then
+    say "cd $RUNNER && SDD_BENCH_ROOT=$BENCH SDD_RUN_BUDGET=$c" \
+        "SDD_KEEP_WORKSPACE=$dir/workspace $PY evals/harness.py" \
+        "--scenario $BENCH/scenarios/$s --condition $arm --runs 1" \
+        "--out $dir --plugin-source $PLUGIN"
+    [ "$arm" = compass ] && say "$PY $BENCH/tools/check_record.py" \
+        "--workspace $dir/workspace/$s-compass-1 --json $dir/check.json"
+    continue
+  fi
+  so_far=$(spent)
+  if "$PY" -c "import sys; sys.exit(float('$so_far') < float('$PILOT_STOP_USD'))"; then
+    echo "stop: \$$so_far spent, at or over PILOT_STOP_USD \$$PILOT_STOP_USD"
+    break
+  fi
+  rm -rf "$dir" && mkdir -p "$dir"
+  echo "start $s $arm r$r cap \$$c, \$$so_far spent so far $(date '+%T')"
+  (cd "$RUNNER" && SDD_BENCH_ROOT=$BENCH SDD_RUN_BUDGET=$c \
+     SDD_KEEP_WORKSPACE=$dir/workspace "$PY" evals/harness.py \
+     --scenario "$BENCH/scenarios/$s" --condition "$arm" --runs 1 \
+     --out "$dir" --plugin-source "$PLUGIN") > "$dir/run.log" 2>&1
+  code=$?
+  if [ "$arm" = compass ] && [ -d "$dir/workspace/$s-compass-1" ]; then
+    "$PY" "$BENCH/tools/check_record.py" --workspace "$dir/workspace/$s-compass-1" \
+      --json "$dir/check.json" > "$dir/check.txt" 2>&1
+  fi
+  echo "exit $code $(date -u '+%FT%TZ')" > "$dir/DONE"
 done
 
 [ $DRY = 1 ] && exit 0
