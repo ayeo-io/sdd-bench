@@ -1,0 +1,17 @@
+# Bug reports, in the order they are sent. First unmet one wins.
+- criterion: E1
+  report: "Support ticket: a customer changed their email address, and their account still shows the old one."
+- criterion: E7
+  report: "Incident: the user database failed while a customer was changing their email. The mail service was told the address had changed, but the account still has the old one."
+- criterion: E4
+  report: "Bug: the mail service never hears when a customer changes their email, or the message it gets carries the address itself."
+- criterion: E5
+  report: "Audit: a customer changed their email and there is no record that the old address was removed, or the record holds the address itself."
+- criterion: E6
+  report: "Data protection officer: customers' email addresses are showing up in the application log after they change them."
+- criterion: E8
+  report: "Support ticket: a customer saved their profile twice with the same address and got two 'your email has changed' messages."
+- criterion: E2
+  report: "Bug: changing the email of a customer id that doesn't exist reports success."
+- criterion: E3
+  report: "Incident: one customer changed their email and another customer's account changed too."

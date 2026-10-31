@@ -7,8 +7,9 @@ For each scenario under scenarios/:
 4. the hidden tests and the seed's tests pass on the seed with the
    reference solution under reference/<scenario>/ laid over it.
 
-Usage: python3 tools/check_scenarios.py [--sync]
---sync copies seeds/<seed>/ into each scenario's seed/ first.
+Usage: python3 tools/check_scenarios.py [--sync] [SCENARIO ...]
+--sync copies seeds/<seed>/ into each scenario's seed/ first. Naming
+scenarios checks only those; with none named, every scenario is checked.
 """
 
 from __future__ import annotations
@@ -21,7 +22,8 @@ import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-SEED_OF = {"shop-idempotency": "shop", "shop-tracing": "shop", "shop-forget-user": "shop"}
+SEED_OF = {"shop-idempotency": "shop", "shop-tracing": "shop", "shop-forget-user": "shop",
+           "shop-change-email": "shop"}
 IGNORE = shutil.ignore_patterns("__pycache__", ".pytest_cache")
 
 
@@ -39,8 +41,15 @@ def pytest(cwd: Path, *args: str) -> int:
 
 def main() -> int:
     sync = "--sync" in sys.argv
+    named = [a for a in sys.argv[1:] if not a.startswith("--")]
+    unknown = [n for n in named if n not in SEED_OF]
+    if unknown:
+        print(f"unknown scenario: {', '.join(unknown)}")
+        return 1
     ok = True
     for name, seed in SEED_OF.items():
+        if named and name not in named:
+            continue
         sdir = ROOT / "scenarios" / name
         src = ROOT / "seeds" / seed
         if sync:

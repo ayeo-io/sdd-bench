@@ -1,0 +1,162 @@
+Pilot additions for sdd-bench on Compass 8.x (local lab patch, never pushed)
+
+Apply after compass-harness-multi-round.patch, to evals/harness.py at the
+Compass tag the pilot measures:
+
+    patch -p1 < compass-harness-multi-round.patch
+    patch -p1 < compass-harness-pilot.patch
+
+It adds two things the multi-round runner lacks:
+
+- SDD_KEEP_WORKSPACE=<dir> copies each run's repository, with .git and
+  .compass/, to <dir>/<scenario>-<condition>-<run>/ when the session ends
+  and before the hidden tests are copied in, so tools/check_record.py can
+  read it.
+- The runner answers Compass approval requests as the person would, at a
+  terminal. Compass 8.x records an approval only from a typed
+  /compass:approve (refused in a `claude -p` session, whose
+  CLAUDE_CODE_ENTRYPOINT is sdk-cli) or from `compass evidence approve`
+  with a terminal on standard input. Before the model approver is asked,
+  the runner runs that verb under a pseudo-terminal for every file in
+  .compass/work/*/approval-requests/pending/, as approver
+  sdd-bench-approver, role owner, then tells the session it approved.
+
+--- a/evals/harness.py
++++ b/evals/harness.py
+@@ -1899,8 +1899,85 @@
+     except (ValueError, KeyError, TypeError):
+         return {"waiting": False, "reply": "", "cost_usd": cost,
+                 "error": (proc.stdout + proc.stderr)[-500:]}
+
+
++_SDD_APPROVER_NAME = "sdd-bench-approver"
++
++
++def _sdd_run_in_pty(argv: list[str], cwd: Path, env: dict[str, str]) -> tuple[int, str]:
++    """Run `argv` with a pseudo-terminal on its standard input, as a person's
++    terminal would be. POSIX only."""
++    import pty
++    pid, fd = pty.fork()
++    if pid == 0:
++        try:
++            os.chdir(cwd)
++            os.execve(argv[0], argv, env)
++        finally:
++            os._exit(127)
++    out = b""
++    while True:
++        try:
++            chunk = os.read(fd, 4096)
++        except OSError:
++            break
++        if not chunk:
++            break
++        out += chunk
++    os.close(fd)
++    _, status = os.waitpid(pid, 0)
++    return os.waitstatus_to_exitcode(status), out.decode("utf-8", "replace")
++
++
++def _sdd_answer_requests(repo_dir: Path, env: dict[str, str],
++                         seen: set[str]) -> list[dict[str, Any]]:
++    """The runner's person at the terminal: approve each pending Compass
++    approval request not in `seen` with `compass evidence approve`, the
++    command `compass evidence request` prints for a host with no prompt
++    path. The terminal verb leaves the request file pending, so `seen`
++    keeps one request from being answered twice."""
++    compass = shutil.which("compass", path=env.get("PATH"))
++    answered: list[dict[str, Any]] = []
++    if compass is None:
++        return answered
++    for path in sorted(repo_dir.glob(".compass/work/*/approval-requests/pending/*.yml")):
++        key = str(path.relative_to(repo_dir))
++        try:
++            request = load_yaml(str(path))
++        except Exception as exc:  # noqa: BLE001 - recorded, never fatal
++            request = {"_error": str(exc)}
++        key += ":" + str(request.get("nonce"))
++        if key in seen:
++            continue
++        seen.add(key)
++        if "_error" in request:
++            answered.append({"request": path.name, "exit_code": None,
++                             "output": request["_error"]})
++            continue
++        form, value = request.get("form"), request.get("value")
++        argv = [compass, "evidence", "approve", "--issue", str(request.get("issue"))]
++        argv += ["--decisions"] if form == "decisions" else [f"--{form}", str(value)]
++        argv += ["--approver", _SDD_APPROVER_NAME, "--role", "owner"]
++        if request.get("scope"):
++            argv += ["--scope", str(request["scope"])]
++        code, output = _sdd_run_in_pty(argv, repo_dir, env)
++        answered.append({"request": request.get("number"), "issue": request.get("issue"),
++                         "form": form, "value": value, "exit_code": code,
++                         "output": strip_ansi(output)[-1500:]})
++    return answered
++
++
++def _sdd_keep_workspace(repo_dir: Path, scenario_id: str, condition: str,
++                        run_index: int) -> str | None:
++    """Copy the finished repository to SDD_KEEP_WORKSPACE, if set."""
++    keep = os.environ.get("SDD_KEEP_WORKSPACE")
++    if not keep:
++        return None
++    dest = Path(keep) / f"{scenario_id}-{condition}-{run_index}"
++    shutil.copytree(repo_dir, dest, symlinks=True)
++    return str(dest)
++
++
+ def _sdd_score(repo_dir: Path, scenario_dir: Path) -> dict[str, Any]:
+     root = Path(os.environ["SDD_BENCH_ROOT"])
+     with tempfile.TemporaryDirectory() as tmp:
+@@ -1942,9 +2019,28 @@
+     rounds: list[dict[str, Any]] = []
+     approvals: list[dict[str, Any]] = []
++    terminal_approvals: list[dict[str, Any]] = []
++    seen_requests: set[str] = set()
+     approver_cost = 0.0
+     stop = "max rounds"
+     for round_no in range(1, _SDD_MAX_ROUNDS + 1):
+         for _ in range(_SDD_MAX_APPROVALS):
++            answered = _sdd_answer_requests(repo_dir, env, seen_requests)
++            if answered:
++                remaining = round(budget_usd - state["cost_usd"], 6)
++                terminal_approvals += [{"round": round_no, **a} for a in answered]
++                if remaining <= 0:
++                    break
++                done = ", ".join(str(a.get("request")) for a in answered if a["exit_code"] == 0)
++                reply = (f"I approved request(s) {done} in my terminal. Carry on to the "
++                         f"finished, tested change." if done else
++                         "I could not approve your request in my terminal. Carry on as "
++                         "far as you can.")
++                exit_code, text = _invoke_claude(
++                    claude_exe, reply, common_args, repo_dir, state,
++                    resume=state["session_id"], remaining_budget=remaining, env=env)
++                if text:
++                    final_text = text
++                continue
+             decision = _sdd_approve(scenario["prompt"], final_text or "")
+             approver_cost += decision["cost_usd"]
+             remaining = round(budget_usd - state["cost_usd"], 6)
+@@ -1989,6 +2085,7 @@
+         if text:
+             final_text = text
+     return exit_code, final_text, {"stop": stop, "rounds": rounds, "approvals": approvals,
++                                   "terminal_approvals": terminal_approvals,
+                                    "approver_cost_usd": round(approver_cost, 6)}
+
+
+@@ -2522,6 +2619,8 @@
+         _finalise_tool_calls(state)
+         diff_text, changed_paths, changed = _diff_since_seed(
+             repo_dir, seed_commit, child_env, seed_git_snapshot, tampered_paths)
++        kept_workspace = _sdd_keep_workspace(repo_dir, scenario["id"], condition,
++                                             run_index)
+
+         hidden_record: dict[str, Any] | None = None
+         regressions: list[str] | None = None
+@@ -2617,3 +2716,4 @@
+         "multi_round": multi_round,
++        "kept_workspace": kept_workspace,
+         "session_id": state["session_id"],
+         "cwd": record_cwd,
