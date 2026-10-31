@@ -25,6 +25,7 @@ Three services - users, orders and subscriptions - that share nothing but an in-
 | shop-idempotency | A retried `create_order` must not make a second order | quick fix: small, one service |
 | shop-tracing | A trace id follows a request through every service and event | regular: cross-cutting |
 | shop-forget-user | Delete a user and everything about them, across separate stores, without the user service knowing who holds data | full: personal data |
+| shop-change-email | Change a user's email, announce it and audit it, with no address leaving the user service | full: small, but labeled `personal-data`, so a person signs it off |
 
 Each scenario's `expected_route` is a check on the scenario, not a score: a scenario stays in the suite only while most runs take that route (see `docs/route-checks.md`).
 

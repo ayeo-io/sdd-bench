@@ -1,0 +1,14 @@
+id: shop-change-email
+prompt: |
+  Customers want to change the email address on their account. Add
+  UserService.change_email(user_id, new_email), and announce the change on
+  the bus so other services can act on it: a mail service will later send
+  the customer a confirmation. An email address is personal data.
+budget_usd: 3.0
+hidden_command: python3 -m pytest tests/test_hidden_change_email.py -q
+continue_reply: Go ahead with whichever option you recommend.
+expected_route: full
+# A framework that brings a person's sign-off for a personal-data change
+# should label this one personal-data. Like expected_route, this checks the
+# scenario, not the framework: see docs/route-checks.md.
+expected_labels: [personal-data]
