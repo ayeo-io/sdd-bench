@@ -7,7 +7,7 @@ the change without seeing either address, the removal of the old address is
 on the audit trail, a failed write changes nothing, and a repeated request
 announces nothing new.
 
-## Behaviours
+## Behaviors
 
 | Id | Given | When | Then |
 |---|---|---|---|

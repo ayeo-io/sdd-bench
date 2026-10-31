@@ -184,7 +184,7 @@ def test_a_personal_data_label_with_no_sign_off_fails(workspace: Path) -> None:
     write_issue(workspace, good_manifest(workspace, evidence=[]), good_records())
     check = check_record.check_workspace(workspace)["issues"][0]["checks"]["approvals"]
     assert check["status"] == "fail"
-    assert "labelled personal-data" in check["detail"]
+    assert "labeled personal-data" in check["detail"]
 
 
 def test_an_approval_given_for_a_check_is_not_the_sign_off(workspace: Path) -> None:
@@ -201,7 +201,7 @@ def test_a_sign_off_by_the_agent_fails(workspace: Path) -> None:
     assert statuses(workspace)["approvals"] == "fail"
 
 
-def test_an_unlabelled_change_requires_no_approval(workspace: Path) -> None:
+def test_an_unlabeled_change_requires_no_approval(workspace: Path) -> None:
     write_issue(workspace, good_manifest(workspace, assessment={"labels": []}, evidence=[]),
                 good_records())
     check = check_record.check_workspace(workspace)["issues"][0]["checks"]["approvals"]

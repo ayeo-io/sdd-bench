@@ -259,7 +259,7 @@ def required_approvals(manifest: dict[str, Any]) -> list[tuple[str, str]]:
     needed: list[tuple[str, str]] = []
     hit = sorted(labels_of(manifest) & SIGN_OFF_LABELS)
     if hit:
-        needed.append(("sign-off", f"labelled {', '.join(hit)}"))
+        needed.append(("sign-off", f"labeled {', '.join(hit)}"))
     for stage in manifest.get("checkpoints") or []:
         needed.append((f"checkpoint:{stage}", "listed under `checkpoints:`"))
     for item in manifest.get("evidence_required") or []:
