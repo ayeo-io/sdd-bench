@@ -57,14 +57,21 @@ This copies the shared seed into each scenario, then checks that the seed's own 
 
 ## Running a scenario
 
-For now the runner is the eval harness in the Compass repository, which accepts a scenario directory by path:
+The runner is `tools/harness.py`. It came from the Compass repository's eval harness, with the two lab patches in `tools/` applied, so every framework is run by code none of them owns:
 
 ```
-python3 evals/harness.py --scenario /path/to/sdd-bench/scenarios/shop-tracing \
-  --condition compass --runs 4 --out /path/to/results
+python3 tools/harness.py --scenario shop-tracing --condition compass \
+  --plugin-source /path/to/compass --runs 4 --out /path/to/results
 ```
 
-Results name the framework, its commit and the model. The plan is to move the runner here, so every framework is run by code none of them owns.
+- `--scenario` takes a scenario id under `scenarios/`, or a path to a scenario directory.
+- `--plugin-source` is required. It names the Compass checkout under measurement, and its `HEAD` is the commit the results record.
+- `--out` defaults to `out/`, which is not tracked.
+- The `R1` and `R3` conditions read the names key from `COMPASS_RIVALS_KEY` or `--frameworks-config`.
+
+Results name the framework, its commit and the model. The runner's tests use a fake `claude` and run no model: `python3 -m pytest tools/tests`. The tests in `tools/tests/test_harness_root_real.py` run only as root, with `COMPASS_ROOT_TEST_USER` naming an unprivileged user.
+
+`tools/run-pilot-8x.sh` still builds the 8.x pilot runner from the Compass `v8.0.4` tag and the two patches, so the published pilot can be run again as it was.
 
 ## Rules
 
