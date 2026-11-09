@@ -1,7 +1,11 @@
 """Tests for tools/check_record.py, on small issue records built in a temporary
 workspace. The 8.x fixture copies the shape of a real Compass 8.0.4 record:
 red and green files that hold `tree_id`, `changes_id` and `content_digest`,
-and a manifest with `scenarios:`, `evidence:` and `land_commit`."""
+and a manifest with `scenarios:`, `evidence:` and `land_commit`. The 9.0.0
+fixture copies the shape Compass 9.0.0 writes (checked on the `v9` release
+candidate): red and green files with `file_sha256` and a `test_files` list,
+a manifest with `request:`, `pull_request:`, a `pr-approval` record and
+`landed_with_record: true`, committed with the code and squash-merged."""
 
 from __future__ import annotations
 
@@ -83,7 +87,7 @@ def good_manifest(ws: Path, **changes: Any) -> dict[str, Any]:
         "evidence": [{"id": "EV-G5", "type": "human-approval", "guardrail": "G5",
                       "approver": "sdd-bench-approver", "role": "owner",
                       "scope": "delete a user", "decision": "approved",
-                      "timestamp": "2026-10-31T10:30:00Z", "via": "terminal"}],
+                      "timestamp": "2026-10-31T09:30:00Z", "via": "terminal"}],
         "land_commit": git(ws, "rev-parse", "HEAD"),
     }
     manifest.update(changes)
@@ -111,7 +115,8 @@ def statuses(ws: Path) -> dict[str, str]:
 
 def test_a_complete_record_passes_every_check(workspace: Path) -> None:
     write_issue(workspace, good_manifest(workspace), good_records())
-    assert statuses(workspace) == dict.fromkeys(check_record.CHECKS, "pass")
+    assert statuses(workspace) == {**dict.fromkeys(check_record.CHECKS, "pass"),
+                                   "ship-approval": "not-applicable"}
     assert check_record.main(["--workspace", str(workspace)]) == 0
 
 
@@ -274,3 +279,282 @@ def test_the_checker_imports_nothing_from_compass() -> None:
     source = (Path(check_record.__file__)).read_text()
     assert "compass_pkg" not in source
     assert "import compass" not in source
+
+
+# --- the rules added for the 9.0.0 measurement --------------------------------
+
+def test_a_red_that_names_no_scenario_is_reported_as_such(workspace: Path) -> None:
+    records = good_records()
+    del records["red-TRC-A2.json"]
+    records["red.json"] = run_record(None, False, "2026-10-31T10:00:30Z")
+    write_issue(workspace, good_manifest(workspace), records)
+    check = check_record.check_workspace(workspace)["issues"][0]["checks"]["red-before-green"]
+    assert check["scenarios"]["TRC-A2"]["detail"] == (
+        "no red names this scenario; 1 red(s) on record name no scenario")
+
+
+def test_the_request_link_must_be_the_expected_one(workspace: Path) -> None:
+    write_issue(workspace, good_manifest(workspace), good_records())
+    ok = check_record.check_workspace(workspace, expect_request="acme/shop#12")
+    other = check_record.check_workspace(workspace, expect_request="acme/shop#13")
+    assert ok["issues"][0]["checks"]["request-link"]["status"] == "pass"
+    check = other["issues"][0]["checks"]["request-link"]
+    assert check == {"status": "fail", "detail": "links acme/shop#12, not the request acme/shop#13"}
+
+
+def test_a_request_link_url_alone_counts(workspace: Path) -> None:
+    manifest = good_manifest(workspace)
+    del manifest["github"]
+    manifest["request"] = {"link": "https://github.com/acme/shop/issues/12",
+                           "requester": "Sam Taylor"}
+    write_issue(workspace, manifest, good_records())
+    report = check_record.check_workspace(workspace, expect_request="acme/shop#12")
+    assert report["issues"][0]["checks"]["request-link"]["status"] == "pass"
+
+
+def test_a_request_link_that_is_not_a_github_issue_fails(workspace: Path) -> None:
+    manifest = good_manifest(workspace)
+    del manifest["github"]
+    manifest["request"] = {"link": "https://tracker.example/T-12", "requester": "Sam"}
+    write_issue(workspace, manifest, good_records())
+    assert statuses(workspace)["request-link"] == "fail"
+
+
+def test_the_cli_refuses_a_malformed_expected_request(workspace: Path) -> None:
+    with pytest.raises(SystemExit):
+        check_record.main(["--workspace", str(workspace), "--expect-request", "shop#12"])
+
+
+def test_a_sign_off_after_the_first_green_fails(workspace: Path) -> None:
+    manifest = good_manifest(workspace)
+    manifest["evidence"][0]["timestamp"] = "2026-10-31T10:30:00Z"
+    write_issue(workspace, manifest, good_records())
+    check = check_record.check_workspace(workspace)["issues"][0]["checks"]["approvals"]
+    assert check["status"] == "fail"
+    assert "not before the first green at 2026-10-31T10:05:00+00:00" in check["detail"]
+
+
+def test_a_typed_ship_approval_is_not_the_sign_off(workspace: Path) -> None:
+    manifest = good_manifest(workspace)
+    manifest["evidence"][0]["ship"] = "forget-user"
+    write_issue(workspace, manifest, good_records())
+    assert statuses(workspace)["approvals"] == "fail"
+
+
+def test_a_pull_request_review_is_not_the_sign_off(workspace: Path) -> None:
+    manifest = good_manifest(workspace, evidence=[{
+        "id": "EV-PR-APPROVAL-1", "type": "pr-approval", "decision": "approved",
+        "pull_request": {"repo": "acme/shop", "number": 13},
+        "approver": "sdd-bench-approver", "pr_author": "sdd-bench-author",
+        "timestamp": "2026-10-31T09:00:00Z"}])
+    write_issue(workspace, manifest, good_records())
+    check = check_record.check_workspace(workspace)["issues"][0]["checks"]["approvals"]
+    assert check["status"] == "fail"
+    assert "no approved human-approval for the sign-off" in check["detail"]
+
+
+def test_scenario_approval_needs_the_specify_checkpoint_before_code(workspace: Path) -> None:
+    manifest = good_manifest(workspace, evidence_required=["scenario-approval"])
+    write_issue(workspace, manifest, good_records())
+    check = check_record.check_workspace(workspace)["issues"][0]["checks"]["approvals"]
+    assert [a["required"] for a in check["approvals"]] == ["sign-off", "checkpoint:specify"]
+    assert check["status"] == "fail"
+    manifest["evidence"].append({
+        "id": "EV-CHECKPOINT-specify-1", "type": "checkpoint-approval",
+        "checkpoint": "specify", "approver": "sdd-bench-approver",
+        "decision": "approved", "timestamp": "2026-10-31T10:06:00Z"})
+    (workspace / ".compass/work/forget-user/manifest.yml").write_text(yaml.safe_dump(manifest))
+    check = check_record.check_workspace(workspace)["issues"][0]["checks"]["approvals"]
+    assert check["status"] == "fail" and "not before the first green" in check["detail"]
+
+
+def test_a_land_commit_at_the_base_fails(workspace: Path) -> None:
+    write_issue(workspace, good_manifest(workspace), good_records())
+    base = git(workspace, "rev-parse", "HEAD")
+    check = check_record.check_workspace(workspace, base=base)["issues"][0]["checks"][
+        "land-commit"]
+    assert check["status"] == "fail" and "cannot hold the change" in check["detail"]
+
+
+def test_a_land_commit_before_the_base_fails(workspace: Path) -> None:
+    write_issue(workspace, good_manifest(workspace), good_records())
+    (workspace / "later.txt").write_text("x")
+    git(workspace, "add", "later.txt")
+    git(workspace, "commit", "-q", "-m", "later")
+    base = git(workspace, "rev-parse", "HEAD")
+    check = check_record.check_workspace(workspace, base=base)["issues"][0]["checks"][
+        "land-commit"]
+    assert check["status"] == "fail"
+
+
+# A hand-written record in the shape Compass 9.0.0 writes, landed with the
+# code on a branch and squash-merged into main by the bench.
+
+V9_STAMP = "2026-11-09T10:20:00+00:00"
+
+
+def v9_run_record(scenario: str, passed: bool, when: str, text: str) -> dict[str, Any]:
+    return {"command": f"python3 -m pytest -q {TEST_FILE}", "scenario": scenario,
+            "loop": "outer", "exit_code": 0 if passed else 1, "passed": passed,
+            "timestamp": when, "tree_id": "77b694087952af4b2ac2e75fcf83c8e912c02afb",
+            "file_sha256": {TEST_FILE: hashlib.sha256(text.encode()).hexdigest(),
+                            "shop/orders.py": "0" * 64},
+            "file_modes": {TEST_FILE: "100644"}, "test_files": [TEST_FILE],
+            "record_id": "34ed65ce02ef41e3", "content_digest": "sha256:" + "1" * 64}
+
+
+def v9_manifest(merge: str, **changes: Any) -> dict[str, Any]:
+    manifest: dict[str, Any] = {
+        "schema_version": "3.0", "issue": "idem",
+        "assessment": {"risk": "contained", "labels": []},
+        "github": {"repo": "acme-shop/shop", "number": 41},
+        "request": {"link": "https://github.com/acme-shop/shop/issues/41",
+                    "requester": "Sam Taylor", "recorded_by": "compass quick-fix start"},
+        "evidence_required": ["request", "scenarios", "red-before-green", "suite-green",
+                              "correctness", "governance", "traceability", "outer-loop",
+                              "ship-approval"],
+        "scenarios": [{"id": "TRC-001", "tests": [TEST_FILE]}],
+        "status": "done", "land_timestamp": V9_STAMP, "landed_with_record": True,
+        "pull_request": {"repo": "acme-shop/shop", "number": 42,
+                         "merged_at": "2026-11-09T10:30:00Z", "merge_commit": merge,
+                         "author": "sdd-bench-author"},
+        "evidence": [{
+            "id": "EV-PR-APPROVAL-1", "type": "pr-approval",
+            "pull_request": {"repo": "acme-shop/shop", "number": 42},
+            "review_id": 9000042, "approver": "sdd-bench-approver",
+            "pr_author": "sdd-bench-author", "decision": "approved",
+            "timestamp": "2026-11-09T10:29:00Z", "merge_commit": merge,
+            "merged_at": "2026-11-09T10:30:00Z", "read_as": "sdd-bench-author",
+            "via": "github", "issue": "idem", "generation": 1}],
+    }
+    manifest.update(changes)
+    return manifest
+
+
+@pytest.fixture
+def v9_workspace(tmp_path: Path) -> dict[str, Any]:
+    """The seed on main; a branch whose one commit holds the change and the
+    record with `land_timestamp`; main squash-merged from it; the working
+    tree left on the branch, with the post-merge fields in the manifest."""
+    ws = tmp_path / "v9"
+    (ws / "tests").mkdir(parents=True)
+    (ws / "README.md").write_text("shop\n")
+    git(ws, "init", "-q", "-b", "main")
+    git(ws, "add", "README.md")
+    git(ws, "commit", "-q", "-m", "Initial commit")
+    seed = git(ws, "rev-parse", "HEAD")
+    git(ws, "checkout", "-q", "-b", "fix/idempotency")
+    (ws / TEST_FILE).write_text(TEST_TEXT)
+    records = {
+        "red-TRC-001.outer.json": v9_run_record("TRC-001", False, "2026-11-09T10:00:00+00:00",
+                                                TEST_TEXT),
+        "green-TRC-001.outer.json": v9_run_record("TRC-001", True, "2026-11-09T10:10:00+00:00",
+                                                  TEST_TEXT)}
+    landed = v9_manifest("", evidence=[])
+    for key in ("pull_request",):
+        del landed[key]
+    issue = write_issue(ws, landed, records, slug="idem")
+    git(ws, "add", "-A")
+    git(ws, "commit", "-q", "-m", "Make create_order idempotent")
+    head = git(ws, "rev-parse", "HEAD")
+    tree = git(ws, "rev-parse", "HEAD^{tree}")
+    merge = git(ws, "commit-tree", tree, "-p", seed, "-m", "Make create_order idempotent (#42)")
+    git(ws, "update-ref", "refs/heads/main", merge)
+    (issue / "manifest.yml").write_text(yaml.safe_dump(v9_manifest(merge)))
+    return {"ws": ws, "seed": seed, "head": head, "merge": merge, "issue": issue}
+
+
+def v9_check(world: dict[str, Any], **kw: Any) -> dict[str, Any]:
+    report = check_record.check_workspace(world["ws"], "main", base=world["seed"],
+                                          expect_request="acme-shop/shop#41", **kw)
+    assert len(report["issues"]) == 1
+    return report["issues"][0]
+
+
+def rewrite(world: dict[str, Any], manifest: dict[str, Any]) -> None:
+    (world["issue"] / "manifest.yml").write_text(yaml.safe_dump(manifest))
+
+
+def test_a_9x_record_passes_every_check(v9_workspace: dict[str, Any]) -> None:
+    item = v9_check(v9_workspace)
+    assert {k: v["status"] for k, v in item["checks"].items()} == dict.fromkeys(
+        check_record.CHECKS, "pass")
+    assert item["checks"]["land-commit"]["land_commit"] == v9_workspace["merge"]
+    assert "read from git" in item["checks"]["land-commit"]["detail"]
+    assert item["passed"] is True
+
+
+def test_a_9x_land_commit_is_not_the_branch_commit(v9_workspace: dict[str, Any]) -> None:
+    # On the session's branch the commit that added the stamp is the branch
+    # commit; on main it is the squash commit.
+    report = check_record.check_workspace(v9_workspace["ws"], "fix/idempotency",
+                                          base=v9_workspace["seed"])
+    check = report["issues"][0]["checks"]["land-commit"]
+    assert check["land_commit"] == v9_workspace["head"]
+
+
+def test_a_9x_record_never_merged_fails_land_commit(v9_workspace: dict[str, Any]) -> None:
+    git(v9_workspace["ws"], "update-ref", "refs/heads/main", v9_workspace["seed"])
+    check = v9_check(v9_workspace)["checks"]["land-commit"]
+    assert check["status"] == "fail" and "no commit on main added" in check["detail"]
+
+
+def test_a_9x_digest_that_differs_from_the_file_fails(v9_workspace: dict[str, Any]) -> None:
+    (v9_workspace["ws"] / TEST_FILE).write_text(TEST_TEXT + "# edited\n")
+    check = v9_check(v9_workspace)["checks"]["test-digests"]
+    assert check["status"] == "fail"
+    assert len(check["mismatches"]) == 2  # only the test file, in each record
+
+
+def test_a_9x_record_linking_another_request_fails(v9_workspace: dict[str, Any]) -> None:
+    rewrite(v9_workspace, v9_manifest(v9_workspace["merge"],
+                                      github={"repo": "acme-shop/shop", "number": 99}))
+    assert v9_check(v9_workspace)["checks"]["request-link"]["status"] == "fail"
+
+
+def test_a_9x_record_with_no_ship_approval_fails(v9_workspace: dict[str, Any]) -> None:
+    rewrite(v9_workspace, v9_manifest(v9_workspace["merge"], evidence=[]))
+    check = v9_check(v9_workspace)["checks"]["ship-approval"]
+    assert check["status"] == "fail" and "owed" in check["detail"]
+
+
+@pytest.mark.parametrize("change, words", [
+    ({"approver": "sdd-bench-author"}, "the approver is the pull request's author"),
+    ({"approver": "agent"}, "the approver is not a person"),
+    ({"pull_request": {"repo": "acme-shop/shop", "number": 7}}, "not the linked"),
+    ({"timestamp": None}, "no time"),
+])
+def test_a_9x_pr_approval_that_does_not_count_fails(v9_workspace: dict[str, Any],
+                                                    change: dict[str, Any], words: str) -> None:
+    manifest = v9_manifest(v9_workspace["merge"])
+    manifest["evidence"][0].update(change)
+    rewrite(v9_workspace, manifest)
+    check = v9_check(v9_workspace)["checks"]["ship-approval"]
+    assert check["status"] == "fail" and words in check["detail"]
+
+
+def test_a_typed_ship_approval_counts(v9_workspace: dict[str, Any]) -> None:
+    rewrite(v9_workspace, v9_manifest(v9_workspace["merge"], evidence=[{
+        "id": "EV-APPROVAL-SHIP-1", "type": "human-approval", "ship": "idem",
+        "approver": "sdd-bench-approver", "role": "owner", "decision": "approved",
+        "timestamp": "2026-11-09T10:29:00Z", "issue": "idem", "generation": 1}]))
+    assert v9_check(v9_workspace)["checks"]["ship-approval"]["status"] == "pass"
+
+
+def test_a_record_not_owing_a_ship_approval_can_be_required_to(workspace: Path) -> None:
+    write_issue(workspace, good_manifest(workspace), good_records())
+    report = check_record.check_workspace(workspace, require_ship_approval=True)
+    assert report["issues"][0]["checks"]["ship-approval"]["status"] == "fail"
+    assert report["passed"] is False
+
+
+def test_the_cli_takes_the_9x_options(v9_workspace: dict[str, Any], tmp_path: Path,
+                                      capsys: pytest.CaptureFixture[str]) -> None:
+    out = tmp_path / "check.json"
+    code = check_record.main(["--workspace", str(v9_workspace["ws"]), "--branch", "main",
+                              "--base", v9_workspace["seed"],
+                              "--expect-request", "acme-shop/shop#41", "--json", str(out)])
+    assert code == 0
+    report = json.loads(out.read_text())
+    assert report["base"] == v9_workspace["seed"]
+    assert "ship-approval     pass" in capsys.readouterr().out
