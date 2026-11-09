@@ -1020,7 +1020,11 @@ def test_child_environment_drops_claude_variables_and_plugin_bin_paths(
     plugin_dir_arg = compass_calls[0]["args"][
         compass_calls[0]["args"].index("--plugin-dir") + 1
     ]
-    assert compass_path_entries[0] == str(Path(plugin_dir_arg) / "bin")
+    # The fake GitHub's `gh` comes first for every arm (tools/fake_gh.py),
+    # then the plugin copy's own bin/.
+    assert compass_path_entries[1] == str(Path(plugin_dir_arg) / "bin")
+    assert compass_path_entries[0] == str(Path(compass_env["GH_CONFIG_DIR"]).parent / "bin")
+    assert bare_path_entries[0] == str(Path(bare_env["GH_CONFIG_DIR"]).parent / "bin")
     assert compass_calls[0]["resolved_compass"] == \
         str(Path(plugin_dir_arg) / "bin" / "compass")
 

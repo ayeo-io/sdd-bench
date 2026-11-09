@@ -1272,7 +1272,7 @@ def _git_head_is_valid(repo_dir: Path) -> bool:
 
 def _run_guarded_git(args: list[str], repo_dir: Path, env: dict[str, str],
                       seed_git_snapshot: dict[str, bytes | None],
-                      tampered_paths: list[str]
+                      tampered_paths: list[str], *, text: bool = True
                       ) -> subprocess.CompletedProcess | types.SimpleNamespace:
     """One git command against the session's own repository: restores what
     changed among `_TAMPER_WATCHED_RELATIVE_PATHS` to the seed's own state
@@ -1308,13 +1308,13 @@ def _run_guarded_git(args: list[str], repo_dir: Path, env: dict[str, str],
     git_path = repo_dir / ".git"
     if git_path.exists() and not git_path.is_dir():
         return types.SimpleNamespace(args=["git", *args], returncode=1,
-                                      stdout="", stderr="")
+                                      stdout="" if text else b"", stderr="")
     if not _git_head_is_valid(repo_dir):
         if ".git/HEAD" not in tampered_paths:
             tampered_paths.append(".git/HEAD")
         return types.SimpleNamespace(args=["git", *args], returncode=1,
-                                      stdout="", stderr="")
-    return _run_git(args, repo_dir, env)
+                                      stdout="" if text else b"", stderr="")
+    return _run_git(args, repo_dir, env, text=text)
 
 
 def _exclude_pyc_files(repo_dir: Path) -> None:
@@ -1329,22 +1329,39 @@ def _exclude_pyc_files(repo_dir: Path) -> None:
         fh.write("__pycache__/\n*.pyc\n")
 
 
-def _git_init_and_commit(repo_dir: Path, env: dict[str, str]) -> str:
+def _git_init_and_commit(repo_dir: Path, env: dict[str, str], *,
+                         origin: str | None = None,
+                         push_url: Path | None = None) -> str:
     """Turn the materialised directory into a git repository with one
-    ordinary commit, and return its id so a later diff can name it directly.
-    No tag or branch marks it: a session's own allowed `git log --decorate`
-    must show nothing that says a commit is under evaluation. The commit
-    message is ordinary too, for the same reason. Every call runs through
-    `_run_git`, with the environment built for the session, never
-    `os.environ` - this is the repository a session's own code, and later
-    the harness's own diff, run inside."""
+    ordinary commit on `main`, and return its id so a later diff can name it
+    directly. No tag or extra branch marks it: a session's own allowed
+    `git log --decorate` must show nothing that says a commit is under
+    evaluation. The commit message is ordinary too, for the same reason.
+    Every call runs through `_run_git`, with the environment built for the
+    session, never `os.environ` - this is the repository a session's own
+    code, and later the harness's own diff, run inside.
+
+    With `origin`, the repository gets the remote a real clone of it would
+    have, so a framework that reads origin's repository finds the request's
+    repository. Its push URL is `push_url`, a local bare repository, so a
+    push can never reach GitHub, and `origin/main` names the seed commit as
+    a fetch would. All of it is written before the caller snapshots
+    `.git/config`, so it is part of the seed's own state."""
     call_env = dict(env)
     call_env.update(_GIT_ENV_EXTRA)
-    _run_git(["init", "-q"], repo_dir, call_env)
+    _run_git(["init", "-q", "-b", "main"], repo_dir, call_env)
     _exclude_pyc_files(repo_dir)
     _run_git(["add", "-A"], repo_dir, call_env)
     _run_git(["commit", "-q", "-m", "Initial commit", "--allow-empty"], repo_dir, call_env)
-    return _run_git(["rev-parse", "HEAD"], repo_dir, call_env).stdout.strip()
+    seed = _run_git(["rev-parse", "HEAD"], repo_dir, call_env).stdout.strip()
+    if origin is not None:
+        _run_git(["remote", "add", "origin", origin], repo_dir, call_env)
+        if push_url is not None:
+            _run_git(["config", "remote.origin.pushurl", str(push_url)], repo_dir, call_env)
+        _run_git(["update-ref", "refs/remotes/origin/main", seed], repo_dir, call_env)
+        _run_git(["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main"],
+                 repo_dir, call_env)
+    return seed
 
 
 # --- the session user ---------------------------------------------------------
@@ -1976,7 +1993,9 @@ def _sdd_answer_requests(repo_dir: Path, env: dict[str, str],
             continue
         form, value = request.get("form"), request.get("value")
         argv = [compass, "evidence", "approve", "--issue", str(request.get("issue"))]
-        argv += ["--decisions"] if form == "decisions" else [f"--{form}", str(value)]
+        # `--decisions` and `--ship` take no value, as in Compass's own
+        # `approval_requests` command line; every other form names one.
+        argv += [f"--{form}"] if form in ("decisions", "ship") else [f"--{form}", str(value)]
         argv += ["--approver", _SDD_APPROVER_NAME, "--role", "owner"]
         if request.get("scope"):
             argv += ["--scope", str(request["scope"])]
@@ -2034,12 +2053,15 @@ def _sdd_next_report(scenario_dir: Path, score: dict[str, Any]) -> str:
 def _sdd_multi_round(claude_exe: str, common_args: list[str], repo_dir: Path,
                      state: dict[str, Any], *, scenario: dict[str, Any],
                      scenario_dir: Path, budget_usd: float, env: dict[str, str],
-                     exit_code: int, final_text: str, clock_start: float
+                     exit_code: int, final_text: str, clock_start: float,
+                     seen_requests: set[str] | None = None
                      ) -> tuple[int, str, dict[str, Any]]:
     rounds: list[dict[str, Any]] = []
     approvals: list[dict[str, Any]] = []
     terminal_approvals: list[dict[str, Any]] = []
-    seen_requests: set[str] = set()
+    # Shared with the ship phase, so a request answered here is not answered
+    # again there: the terminal verb leaves the request file pending.
+    seen_requests = set() if seen_requests is None else seen_requests
     approver_cost = 0.0
     stop = "max rounds"
     for round_no in range(1, _SDD_MAX_ROUNDS + 1):
@@ -2107,6 +2129,311 @@ def _sdd_multi_round(claude_exe: str, common_args: list[str], repo_dir: Path,
     return exit_code, final_text, {"stop": stop, "rounds": rounds, "approvals": approvals,
                                    "terminal_approvals": terminal_approvals,
                                    "approver_cost_usd": round(approver_cost, 6)}
+
+
+# --- sdd-bench ship phase: a request link, a merge and a fake GitHub --------
+#
+# A run that reaches target is asked to commit, and the harness then plays the
+# person who opened, reviewed and merged the pull request. Both arms get the
+# same fixed messages, from scenarios/ship-messages.yml. GitHub is a stand-in
+# (tools/fake_gh.py) that answers only reads, from a state file the harness
+# writes; a session can never reach the real `gh` or the user's login.
+
+_SDD_SHIP_MAX_MESSAGES = 3
+_SDD_PR_AUTHOR = "sdd-bench-author"
+_SDD_FAKE_GH = REPO_ROOT / "tools" / "fake_gh.py"
+
+
+def _sdd_fake_github(child_env: dict[str, str],
+                     session_user: SessionUser | None = None) -> Path:
+    """Build the fake GitHub once per harness call and put it in `child_env`:
+    a `gh` wrapper first on `PATH`, and `GH_CONFIG_DIR` naming an empty
+    folder, so even a `gh` found later on `PATH` has no login to use. The
+    wrapper names the state file itself, so the session's environment cannot
+    point it elsewhere. Returns the folder; `run_once` resets its state for
+    each run."""
+    root = Path(tempfile.mkdtemp())
+    (root / "bin").mkdir()
+    (root / "config").mkdir()
+    shutil.copy2(_SDD_FAKE_GH, root / "fake_gh.py")
+    state = root / "state.json"
+    state.write_text("{}\n", encoding="utf-8")
+    wrapper = root / "bin" / "gh"
+    wrapper.write_text(
+        "#!/bin/sh\n"
+        f"GH_FAKE_STATE={shlex.quote(str(state))} exec {shlex.quote(sys.executable)} "
+        f"-I {shlex.quote(str(root / 'fake_gh.py'))} \"$@\"\n", encoding="utf-8")
+    wrapper.chmod(0o755)
+    child_env["PATH"] = os.pathsep.join([str(root / "bin"), child_env.get("PATH", "")])
+    child_env["GH_CONFIG_DIR"] = str(root / "config")
+    for key in ("GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN"):
+        child_env.pop(key, None)
+    if session_user is not None:
+        # The wrapper appends to its call log as the session user.
+        _hand_to(root, session_user)
+    return root
+
+
+def _sdd_request(scenario: dict[str, Any]) -> dict[str, Any] | None:
+    """The scenario's `request:` block, or None when it has none."""
+    request = scenario.get("request")
+    return request if isinstance(request, dict) and request.get("repo") else None
+
+
+def _sdd_login(name: str) -> str:
+    """A GitHub-style login for a person's name: `Sam Taylor` -> `sam-taylor`."""
+    return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-") or "requester"
+
+
+def _sdd_reset_github(root: Path, scenario: dict[str, Any]) -> None:
+    """The fake GitHub at the start of a run: the request's issue exists,
+    no pull request does, and the call log is empty."""
+    request = _sdd_request(scenario) or {}
+    repo, number = request.get("repo", ""), request.get("number")
+    issues = {}
+    if repo and number:
+        body = "\n".join(line for line in str(scenario.get("prompt", "")).splitlines()
+                         if not line.startswith("Request: "))
+        issues[f"{repo}#{number}"] = {
+            "number": number, "title": str(request.get("title") or scenario["id"]),
+            "body": body.strip(), "state": "OPEN",
+            "url": f"https://github.com/{repo}/issues/{number}",
+            "author": {"login": _sdd_login(str(request.get("requester", "")))},
+            "labels": []}
+    state = {"repo": repo, "login": _SDD_PR_AUTHOR, "issues": issues, "prs": {},
+             "reviews": {}}
+    (root / "state.json").write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+    (root / "calls.jsonl").write_text("", encoding="utf-8")
+    remote = root / "remote.git"
+    shutil.rmtree(remote, ignore_errors=True)
+    remote.mkdir()
+
+
+def _sdd_ship_messages(scenario_dir: Path) -> dict[str, str]:
+    """The two fixed ship messages, the same for every arm."""
+    data = yaml.safe_load((scenario_dir.parent / "ship-messages.yml").read_text(
+        encoding="utf-8"))
+    return {"commit": str(data["commit"]), "merged": str(data["merged"])}
+
+
+def _sdd_git(args: list[str], repo_dir: Path, env: dict[str, str],
+             seed_git_snapshot: dict[str, bytes | None], tampered_paths: list[str]
+             ) -> str:
+    """One harness git call in the session's repository, guarded as every
+    other one is; the standard output, stripped, or '' on a failure."""
+    call_env = dict(env)
+    call_env.update(_GIT_ENV_EXTRA)
+    done = _run_guarded_git(args, repo_dir, call_env, seed_git_snapshot, tampered_paths)
+    return done.stdout.strip() if done.returncode == 0 else ""
+
+
+def _sdd_commits_beyond_seed(git: Callable[[list[str]], str], seed: str
+                             ) -> tuple[str | None, str | None]:
+    """`(branch, head)` of the session's work: the current branch when it
+    holds commits beyond the seed, else the newest branch that does. A
+    detached HEAD beyond the seed gives `(None, head)`. `(None, None)` when
+    no commit was made."""
+    current = git(["symbolic-ref", "--short", "-q", "HEAD"])
+    branches = ([current] if current else []) + git(
+        ["for-each-ref", "--sort=-committerdate", "--format=%(refname:short)",
+         "refs/heads"]).splitlines()
+    for branch in branches:
+        if branch and git(["rev-list", "--count", f"{seed}..refs/heads/{branch}"]) not in ("", "0"):
+            return branch, git(["rev-parse", f"refs/heads/{branch}"])
+    if not current and git(["rev-list", "--count", f"{seed}..HEAD"]) not in ("", "0"):
+        return None, git(["rev-parse", "HEAD"])
+    return None, None
+
+
+def _sdd_merge(git: Callable[[list[str]], str], branch: str | None, head: str,
+               pr_number: int, seed: str) -> dict[str, Any]:
+    """Merge the session's work into `main` as GitHub's squash merge would,
+    with git plumbing only, so the working tree and the index stay as the
+    session left them. A commit made straight on `main` is a fast-forward:
+    it is already there."""
+    main_before = git(["rev-parse", "refs/heads/main"])
+    if branch == "main":
+        return {"fast_forward": True, "main_before": main_before, "merge_commit": head}
+    subject = git(["log", "-1", "--format=%s", head]) or "Change"
+    tree = git(["rev-parse", f"{head}^{{tree}}"])
+    merge = git(["commit-tree", tree, "-p", main_before, "-m", f"{subject} (#{pr_number})"])
+    git(["update-ref", "refs/heads/main", merge, main_before])
+    # `main_moved`: the session also committed on `main`, so the squash
+    # commit's parent is not the seed. The squash takes the branch's tree as
+    # it is, where GitHub would merge the two.
+    return {"fast_forward": False, "main_before": main_before, "merge_commit": merge,
+            "main_moved": main_before != seed}
+
+
+def _sdd_score_commit(repo_dir: Path, commit: str, scenario_dir: Path, env: dict[str, str],
+                      seed_git_snapshot: dict[str, bytes | None],
+                      tampered_paths: list[str]) -> dict[str, Any]:
+    """The score of the tree `commit` holds, read with `git archive`."""
+    import io
+    import tarfile
+    done = _run_guarded_git(["archive", "--format=tar", commit], repo_dir, env,
+                            seed_git_snapshot, tampered_paths, text=False)
+    if done.returncode != 0:
+        return {"at_target": False, "parts": {}, "error": "git archive failed"}
+    with tempfile.TemporaryDirectory() as tmp:
+        tree = Path(tmp) / "t"
+        tree.mkdir()
+        with tarfile.open(fileobj=io.BytesIO(done.stdout)) as archive:
+            archive.extractall(tree, filter="data")
+        return _sdd_score(tree, scenario_dir)
+
+
+def _sdd_ship(claude_exe: str, common_args: list[str], repo_dir: Path,
+              state: dict[str, Any], *, scenario: dict[str, Any], scenario_dir: Path,
+              budget_usd: float, env: dict[str, str], exit_code: int, final_text: str,
+              seed_commit: str, seed_git_snapshot: dict[str, bytes | None],
+              tampered_paths: list[str], github: Path, seen_requests: set[str],
+              clock_start: float) -> tuple[int, str, dict[str, Any]]:
+    """The ship phase, for a run at target with budget left: ask for a
+    commit, merge it, write the approving review into the fake GitHub, and
+    tell the session. Returns the exit code, the final text and the record
+    for `multi_round.ship`."""
+    request = _sdd_request(scenario) or {}
+    if not (scenario_dir.parent / "ship-messages.yml").is_file():
+        return exit_code, final_text, {"stop": "not shipped: no ship-messages.yml"}
+    messages = _sdd_ship_messages(scenario_dir)
+    start_cost, start_tokens = state["cost_usd"], state["tokens"]
+    started = time.monotonic()
+    sent: list[dict[str, Any]] = []
+    terminal: list[dict[str, Any]] = []
+    approver_cost = 0.0
+    ship: dict[str, Any] = {"stop": None}
+
+    def git(args: list[str]) -> str:
+        return _sdd_git(args, repo_dir, env, seed_git_snapshot, tampered_paths)
+
+    def say(kind: str, text: str) -> bool:
+        nonlocal exit_code, final_text
+        remaining = round(budget_usd - state["cost_usd"], 6)
+        if remaining <= 0:
+            return False
+        exit_code, reply = _invoke_claude(claude_exe, text, common_args, repo_dir, state,
+                                          resume=state["session_id"],
+                                          remaining_budget=remaining, env=env)
+        if reply:
+            final_text = reply
+        sent.append({"kind": kind, "text": text, "reply": (reply or "")[-1500:]})
+        return True
+
+    def answer_terminal() -> None:
+        # The person at the terminal answers approval requests; these replies
+        # do not count against the phase's message limit.
+        for _ in range(_SDD_MAX_APPROVALS):
+            answered = _sdd_answer_requests(repo_dir, env, seen_requests)
+            if not answered:
+                return
+            terminal.extend(answered)
+            done = ", ".join(str(a.get("request")) for a in answered if a["exit_code"] == 0)
+            if not say("terminal", f"I approved request(s) {done} in my terminal. Carry on."
+                       if done else "I could not approve your request in my terminal. "
+                       "Carry on as far as you can."):
+                return
+
+    def waiting() -> dict[str, Any]:
+        nonlocal approver_cost
+        decision = _sdd_approve(scenario["prompt"], final_text or "")
+        approver_cost += decision["cost_usd"]
+        return decision
+
+    # 1. Commit: the same message, up to the limit, until a commit exists and
+    # the session is not waiting on the person.
+    pending: tuple[str, str] | None = ("commit", messages["commit"])
+    count = 0
+    branch = head = None
+    while pending is not None and count < _SDD_SHIP_MAX_MESSAGES:
+        if not say(*pending):
+            ship["stop"] = "budget"
+            break
+        count += 1
+        answer_terminal()
+        branch, head = _sdd_commits_beyond_seed(git, seed_commit)
+        decision = waiting()
+        if head and not decision["waiting"]:
+            pending = None
+        elif decision["waiting"] and decision["reply"]:
+            pending = ("approver", decision["reply"])
+        else:
+            pending = ("commit", messages["commit"])
+    branch, head = _sdd_commits_beyond_seed(git, seed_commit)
+    merge = ""
+    if head is not None:
+        # 2. Merge. The pull request's number is the request's plus one,
+        # unless the scenario names it.
+        repo, number = request["repo"], int(request.get("pr") or int(request["number"]) + 1)
+        url = f"https://github.com/{repo}/pull/{number}"
+        merged = _sdd_merge(git, branch, head, number, seed_commit)
+        merge = merged["merge_commit"]
+    if head is None:
+        ship["stop"] = ship["stop"] or "no commit"
+    elif not merge:
+        ship.update(stop="merge failed", branch=branch, head=head)
+    else:
+        # 3. The approval: the fake GitHub now holds the merged pull request
+        # and one approving review by the bench's approver, a minute before
+        # the merge.
+        git(["update-ref", "refs/remotes/origin/main", merge])
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        approved_at = (now - timedelta(minutes=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        merged_at = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+        review_id = 9_000_000 + number
+        gh_state = json.loads((github / "state.json").read_text(encoding="utf-8"))
+        gh_state["prs"][f"{repo}#{number}"] = {
+            "number": number, "title": git(["log", "-1", "--format=%s", head]),
+            "state": "MERGED", "mergeCommit": {"oid": merge}, "mergedAt": merged_at,
+            "author": {"login": _SDD_PR_AUTHOR}, "headRefOid": head,
+            "headRefName": branch or "HEAD", "baseRefName": "main", "url": url}
+        gh_state["reviews"][f"{repo}#{number}"] = [{
+            "id": review_id, "state": "APPROVED", "submitted_at": approved_at,
+            "commit_id": head, "html_url": f"{url}#pullrequestreview-{review_id}",
+            "user": {"login": _SDD_APPROVER_NAME, "type": "User"}}]
+        (github / "state.json").write_text(json.dumps(gh_state, indent=2) + "\n",
+                                           encoding="utf-8")
+        ship.update(branch=branch, head=head, pr={"repo": repo, "number": number, "url": url},
+                    reviewer=_SDD_APPROVER_NAME, approved_at=approved_at,
+                    merged_at=merged_at, **merged)
+        # 4. The merged message, then one approver reply if the session waits.
+        text = messages["merged"].format(number=number, url=url, sha8=merge[:8])
+        if say("merged", text):
+            answer_terminal()
+            decision = waiting()
+            if decision["waiting"] and decision["reply"]:
+                say("approver", decision["reply"])
+                answer_terminal()
+            ship["stop"] = "merged"
+        else:
+            ship["stop"] = "budget"
+        score = _sdd_score_commit(repo_dir, merge, scenario_dir, env, seed_git_snapshot,
+                                  tampered_paths)
+        ship["merged_tree_at_target"] = bool(score.get("at_target"))
+        ship["merged_tree_parts_not_met"] = [k for k, v in (score.get("parts") or {}).items()
+                                             if not v.get("pass")]
+    # 5. The record.
+    calls = []
+    for line in (github / "calls.jsonl").read_text(encoding="utf-8").splitlines():
+        try:
+            calls.append(json.loads(line))
+        except ValueError:
+            calls.append({"unreadable": line})
+    status = _sdd_git(["status", "--porcelain", "--untracked-files=all"], repo_dir, env,
+                      seed_git_snapshot, tampered_paths)
+    seed_yml = _sdd_git(["show", f"{seed_commit}:compass.yml"], repo_dir, env,
+                        seed_git_snapshot, tampered_paths)
+    now_yml = repo_dir / "compass.yml"
+    ship.update(
+        messages=sent, terminal_approvals=terminal, gh_calls=calls,
+        uncommitted=[line[3:] for line in status.splitlines() if line],
+        compass_yml_changed=(now_yml.read_text(encoding="utf-8").strip()
+                             if now_yml.is_file() else "") != seed_yml,
+        cost_usd=round(state["cost_usd"] - start_cost, 6),
+        tokens=state["tokens"] - start_tokens,
+        approver_cost_usd=round(approver_cost, 6),
+        seconds=round(time.monotonic() - started, 1))
+    return exit_code, final_text, ship
 
 
 
@@ -2509,7 +2836,8 @@ def run_once(scenario: dict[str, Any], scenario_dir: Path, condition: str,
              r1_scripts_dir: Path,
              child_env: dict[str, str],
              seed_paths: dict[str, str] | None = None,
-             session_user: SessionUser | None = None
+             session_user: SessionUser | None = None,
+             github: Path | None = None
              ) -> dict[str, Any]:
     """Do one run of `scenario` under `condition` and return its record.
     `plugin_copy_dir`, `framework_copy_dir`, `framework_commit`,
@@ -2553,7 +2881,15 @@ def run_once(scenario: dict[str, Any], scenario_dir: Path, condition: str,
         _materialise_repo(scenario_dir, condition, repo_dir,
                            plugin_copy_dir, framework_copy_dir, uvx_exe,
                            child_env, seed_paths)
-        seed_commit = _git_init_and_commit(repo_dir, child_env)
+        ship_request = _sdd_request(scenario) if github is not None else None
+        if github is not None:
+            _sdd_reset_github(github, scenario)
+            _run_git(["init", "--bare", "-q", str(github / "remote.git")], github, child_env)
+        seed_commit = _git_init_and_commit(
+            repo_dir, child_env,
+            origin=(f"https://github.com/{ship_request['repo']}.git"
+                    if ship_request else None),
+            push_url=github / "remote.git" if ship_request and github else None)
         seed_git_snapshot = _snapshot_git_config(repo_dir)
         if session_user is not None:
             # The seed is committed by the harness; from here the working
@@ -2591,10 +2927,27 @@ def run_once(scenario: dict[str, Any], scenario_dir: Path, condition: str,
                 resume=None, remaining_budget=remaining, env=child_env)
             if text:
                 final_text = text
+            seen_requests: set[str] = set()
             exit_code, final_text, multi_round = _sdd_multi_round(
                 claude_exe, common_args, repo_dir, state, scenario=scenario,
                 scenario_dir=scenario_dir, budget_usd=budget_usd, env=child_env,
-                exit_code=exit_code, final_text=final_text, clock_start=clock_start)
+                exit_code=exit_code, final_text=final_text, clock_start=clock_start,
+                seen_requests=seen_requests)
+            if ship_request is not None and github is not None:
+                # The ship phase runs only for a run at target with budget
+                # left; any other run records why it did not ship.
+                if multi_round["stop"] != "at target":
+                    multi_round["ship"] = {"stop": f"not shipped: {multi_round['stop']}"}
+                elif budget_usd - state["cost_usd"] <= 0:
+                    multi_round["ship"] = {"stop": "not shipped: budget"}
+                else:
+                    exit_code, final_text, multi_round["ship"] = _sdd_ship(
+                        claude_exe, common_args, repo_dir, state, scenario=scenario,
+                        scenario_dir=scenario_dir, budget_usd=budget_usd, env=child_env,
+                        exit_code=exit_code, final_text=final_text,
+                        seed_commit=seed_commit, seed_git_snapshot=seed_git_snapshot,
+                        tampered_paths=tampered_paths, github=github,
+                        seen_requests=seen_requests, clock_start=clock_start)
         else:
             multi_round = None
             remaining = round(budget_usd - state["cost_usd"], 6)
@@ -2887,6 +3240,9 @@ def main(argv: list[str] | None = None) -> int:
         session_user = SessionUser.of(_lookup_user(args.session_user))
     plugin_copy_dir, child_env = _prepare_plugin_copy(
         args.condition, plugin_source, session_user=session_user)
+    # Every arm gets the fake GitHub first on PATH, so no session, and no
+    # framework command it runs, can reach the real `gh` or its login.
+    github = _sdd_fake_github(child_env, session_user)
     global _PLUGIN_COPY_MOUNT
     _PLUGIN_COPY_MOUNT = None
     # Without a session user, root's only protection for the copy is a
@@ -2946,7 +3302,7 @@ def main(argv: list[str] | None = None) -> int:
                                uvx_exe=args.uvx,
                                r1_scripts_dir=r1_scripts_dir,
                                child_env=child_env, seed_paths=seed_paths,
-                               session_user=session_user)
+                               session_user=session_user, github=github)
             out_path = out_dir / f"{scenario['id']}-{args.condition}-{run_index}.json"
             out_path.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
     finally:
@@ -2958,6 +3314,7 @@ def main(argv: list[str] | None = None) -> int:
             _remove_read_only_tree(framework_copy_dir)
         if not r1_scripts_dir_is_framework_copy:
             shutil.rmtree(r1_scripts_dir, ignore_errors=True)
+        shutil.rmtree(github, ignore_errors=True)
     return 0
 
 

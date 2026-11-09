@@ -1,0 +1,4 @@
+# The Compass arm's project settings, laid over the seed before the seed
+# commit. The bench's approver stands in for the project owner, so the
+# runner's terminal approvals name a project approver.
+owner: sdd-bench-approver

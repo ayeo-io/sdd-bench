@@ -71,6 +71,8 @@ python3 tools/harness.py --scenario shop-tracing --condition compass \
 
 Results name the framework, its commit and the model. The runner's tests use a fake `claude` and run no model: `python3 -m pytest tools/tests`. The tests in `tools/tests/test_harness_root_real.py` run only as root, with `COMPASS_ROOT_TEST_USER` naming an unprivileged user.
 
+With `SDD_BENCH_ROOT` set, a run goes round by round to the target, then through a ship phase: the session is asked to commit, the harness squash-merges its branch into `main`, records an approving review and tells the session. A scenario's `request:` block names the request its prompt links. Every arm gets a fake `gh` first on `PATH` (`tools/fake_gh.py`) with an empty `GH_CONFIG_DIR`, so no session can reach GitHub or the user's login. `tools/run-9-0-0.sh` runs the 9.0.0 measurement (`docs/preregistration-9-0-0.md`), and `tools/standin_claude.py` checks the ship phase at no cost.
+
 `tools/run-pilot-8x.sh` still builds the 8.x pilot runner from the Compass `v8.0.4` tag and the two patches, so the published pilot can be run again as it was.
 
 ## Rules

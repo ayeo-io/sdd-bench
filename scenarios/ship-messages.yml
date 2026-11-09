@@ -1,0 +1,16 @@
+# The two messages of the ship phase (tools/harness.py, _sdd_ship). The harness
+# sends both arms the same text. A change here changes every scenario: results
+# from before and after it are not compared.
+#
+# commit: sent once a run reaches target, up to 3 times, until the session
+#   has committed and is not waiting on the person.
+# merged: sent after the harness squash-merges the session's branch into main
+#   and records an approving review in the fake GitHub. {number}, {url} and
+#   {sha8} are the pull request's number and URL and the merge commit's first
+#   8 characters.
+commit: >-
+  That is what I asked for. Commit it on a new branch; I will open the pull
+  request and review it.
+merged: >-
+  I reviewed and approved pull request #{number} ({url}) and merged it into
+  main as {sha8}. Anything left on your side?
