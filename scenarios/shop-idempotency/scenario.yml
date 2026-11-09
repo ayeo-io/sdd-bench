@@ -5,12 +5,12 @@ prompt: |
   request_id: a retry with the same request_id must not create a second
   order, and must return the same order id as the first call.
 
-  Request: https://github.com/acme-shop/shop/issues/41 (from Sam Taylor)
+  Request: https://github.com/shopfront-example/shop/issues/41 (from Sam Taylor)
 # The request the prompt's last line links. Both arms see the same line;
 # the harness's fake GitHub answers for this issue, and the pull request
 # is number + 1. tools/check_scenarios.py checks the two agree.
 request:
-  repo: acme-shop/shop
+  repo: shopfront-example/shop
   number: 41
   requester: Sam Taylor
   title: Retried create_order makes duplicate orders

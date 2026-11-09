@@ -7,12 +7,12 @@ prompt: |
   carry the same trace id - as trace_id in log records, and as
   headers["trace_id"] in events.
 
-  Request: https://github.com/acme-shop/shop/issues/47 (from Priya Shah)
+  Request: https://github.com/shopfront-example/shop/issues/47 (from Priya Shah)
 # The request the prompt's last line links. Both arms see the same line;
 # the harness's fake GitHub answers for this issue, and the pull request
 # is number + 1. tools/check_scenarios.py checks the two agree.
 request:
-  repo: acme-shop/shop
+  repo: shopfront-example/shop
   number: 47
   requester: Priya Shah
   title: Follow one request through the shop with a trace id

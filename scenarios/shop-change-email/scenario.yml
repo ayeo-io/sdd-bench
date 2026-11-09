@@ -5,12 +5,12 @@ prompt: |
   the bus so other services can act on it: a mail service will later send
   the customer a confirmation. An email address is personal data.
 
-  Request: https://github.com/acme-shop/shop/issues/58 (from Jordan Lee)
+  Request: https://github.com/shopfront-example/shop/issues/58 (from Jordan Lee)
 # The request the prompt's last line links. Both arms see the same line;
 # the harness's fake GitHub answers for this issue, and the pull request
 # is number + 1. tools/check_scenarios.py checks the two agree.
 request:
-  repo: acme-shop/shop
+  repo: shopfront-example/shop
   number: 58
   requester: Jordan Lee
   title: Let customers change their email address

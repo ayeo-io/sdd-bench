@@ -407,20 +407,20 @@ def v9_manifest(merge: str, **changes: Any) -> dict[str, Any]:
     manifest: dict[str, Any] = {
         "schema_version": "3.0", "issue": "idem",
         "assessment": {"risk": "contained", "labels": []},
-        "github": {"repo": "acme-shop/shop", "number": 41},
-        "request": {"link": "https://github.com/acme-shop/shop/issues/41",
+        "github": {"repo": "shopfront-example/shop", "number": 41},
+        "request": {"link": "https://github.com/shopfront-example/shop/issues/41",
                     "requester": "Sam Taylor", "recorded_by": "compass quick-fix start"},
         "evidence_required": ["request", "scenarios", "red-before-green", "suite-green",
                               "correctness", "governance", "traceability", "outer-loop",
                               "ship-approval"],
         "scenarios": [{"id": "TRC-001", "tests": [TEST_FILE]}],
         "status": "done", "land_timestamp": V9_STAMP, "landed_with_record": True,
-        "pull_request": {"repo": "acme-shop/shop", "number": 42,
+        "pull_request": {"repo": "shopfront-example/shop", "number": 42,
                          "merged_at": "2026-11-09T10:30:00Z", "merge_commit": merge,
                          "author": "sdd-bench-author"},
         "evidence": [{
             "id": "EV-PR-APPROVAL-1", "type": "pr-approval",
-            "pull_request": {"repo": "acme-shop/shop", "number": 42},
+            "pull_request": {"repo": "shopfront-example/shop", "number": 42},
             "review_id": 9000042, "approver": "sdd-bench-approver",
             "pr_author": "sdd-bench-author", "decision": "approved",
             "timestamp": "2026-11-09T10:29:00Z", "merge_commit": merge,
@@ -466,7 +466,7 @@ def v9_workspace(tmp_path: Path) -> dict[str, Any]:
 
 def v9_check(world: dict[str, Any], **kw: Any) -> dict[str, Any]:
     report = check_record.check_workspace(world["ws"], "main", base=world["seed"],
-                                          expect_request="acme-shop/shop#41", **kw)
+                                          expect_request="shopfront-example/shop#41", **kw)
     assert len(report["issues"]) == 1
     return report["issues"][0]
 
@@ -508,7 +508,7 @@ def test_a_9x_digest_that_differs_from_the_file_fails(v9_workspace: dict[str, An
 
 def test_a_9x_record_linking_another_request_fails(v9_workspace: dict[str, Any]) -> None:
     rewrite(v9_workspace, v9_manifest(v9_workspace["merge"],
-                                      github={"repo": "acme-shop/shop", "number": 99}))
+                                      github={"repo": "shopfront-example/shop", "number": 99}))
     assert v9_check(v9_workspace)["checks"]["request-link"]["status"] == "fail"
 
 
@@ -521,7 +521,7 @@ def test_a_9x_record_with_no_ship_approval_fails(v9_workspace: dict[str, Any]) -
 @pytest.mark.parametrize("change, words", [
     ({"approver": "sdd-bench-author"}, "the approver is the pull request's author"),
     ({"approver": "agent"}, "the approver is not a person"),
-    ({"pull_request": {"repo": "acme-shop/shop", "number": 7}}, "not the linked"),
+    ({"pull_request": {"repo": "shopfront-example/shop", "number": 7}}, "not the linked"),
     ({"timestamp": None}, "no time"),
 ])
 def test_a_9x_pr_approval_that_does_not_count_fails(v9_workspace: dict[str, Any],
@@ -553,7 +553,7 @@ def test_the_cli_takes_the_9x_options(v9_workspace: dict[str, Any], tmp_path: Pa
     out = tmp_path / "check.json"
     code = check_record.main(["--workspace", str(v9_workspace["ws"]), "--branch", "main",
                               "--base", v9_workspace["seed"],
-                              "--expect-request", "acme-shop/shop#41", "--json", str(out)])
+                              "--expect-request", "shopfront-example/shop#41", "--json", str(out)])
     assert code == 0
     report = json.loads(out.read_text())
     assert report["base"] == v9_workspace["seed"]

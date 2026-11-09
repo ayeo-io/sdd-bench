@@ -19,7 +19,7 @@ This measurement is ayeo-io/compass-delivery#361 [Run the pre-registered sdd-ben
 | Runs | 6 per arm per scenario, 48 in all |
 | Order | Interleaved: run 1 of every cell, then run 2, and so on. Within a run number, scenario by scenario, bare then Compass. A stop at the budget leaves every cell with the same number of runs, give or take one. |
 | Runner | `tools/harness.py` at the bench commit. The harness no longer lives in Compass (#354), so the runner is not part of the framework under test. |
-| Model | `claude-opus-5-5`, pinned in the harness. Claude Code version **TO CONFIRM** (recorded in `RUN.yml`). |
+| Model | `claude-opus-5-5`, pinned in the harness. Claude Code `2.1.321`, the same for both arms (recorded in `RUN.yml`). |
 | Command | `bash tools/run-9-0-0.sh` |
 
 The pilot showed bare varying by up to 3x between two runs of one cell, so one run per cell cannot separate a 1.5x result from noise. Six runs per cell, reported as medians with their range, is the plan the pilot kept.
@@ -28,7 +28,7 @@ The pilot showed bare varying by up to 3x between two runs of one cell, so one r
 
 Each run is one Claude Code session in a fresh git repository made from the scenario's seed.
 
-1. **The request.** The prompt is the scenario's `prompt:` text. Its last line links the request, for example `Request: https://github.com/acme-shop/shop/issues/41 (from Sam Taylor)`. Both arms see the same text. 9.0.0 asks for the request link at assess (#356), so the Compass session records it itself.
+1. **The request.** The prompt is the scenario's `prompt:` text. Its last line links the request, for example `Request: https://github.com/shopfront-example/shop/issues/41 (from Sam Taylor)`. Both arms see the same text. 9.0.0 asks for the request link at assess (#356), so the Compass session records it itself.
 2. **Rounds to the target.** After each round, `tools/score.py` scores the working tree. Short of the target, the session gets one scripted report from the scenario's `feedback.yml`, at most 8 rounds. A model approver (Sonnet, no tools) answers when the session stops to ask a question, and the runner approves pending Compass approval requests at a pseudo-terminal, as a person would.
 3. **The ship phase.** It runs only for a run at target with budget left:
    1. The harness sends both arms the commit message below, up to 3 times, until the session has committed and is not waiting on the person. No commit gives `ship.stop: "no commit"`.
@@ -47,12 +47,12 @@ From `scenarios/ship-messages.yml`, the same for both arms:
 
 | Scenario | Request | Requester | Pull request |
 |---|---|---|---|
-| shop-idempotency | acme-shop/shop#41 | Sam Taylor | #42 |
-| shop-tracing | acme-shop/shop#47 | Priya Shah | #48 |
-| shop-forget-user | acme-shop/shop#53 | Alex Morgan | #54 |
-| shop-change-email | acme-shop/shop#58 | Jordan Lee | #59 |
+| shop-idempotency | shopfront-example/shop#41 | Sam Taylor | #42 |
+| shop-tracing | shopfront-example/shop#47 | Priya Shah | #48 |
+| shop-forget-user | shopfront-example/shop#53 | Alex Morgan | #54 |
+| shop-change-email | shopfront-example/shop#58 | Jordan Lee | #59 |
 
-`acme-shop/shop` is a made-up name. **TO CONFIRM:** that no repository of that name exists on GitHub. The fake GitHub answers for it either way, so a run never reads a real repository.
+`shopfront-example/shop` is a made-up name. On 9 Nov 2026 GitHub had no account named `shopfront-example`. The fake GitHub answers for it either way, so a run never reads a real repository.
 
 ### The fake GitHub
 
@@ -60,7 +60,7 @@ GitHub is a stand-in, `tools/fake_gh.py`, for both arms:
 
 - A `gh` wrapper comes first on the session's `PATH`, with `GH_CONFIG_DIR` naming an empty folder and no `GH_TOKEN` or `GITHUB_TOKEN`, so no command in the session can use the real `gh` or the owner's login.
 - It answers `gh pr view`, `gh issue view`, `gh api user` and `gh api repos/<r>/pulls/<n>` and `.../reviews`, from a state file the harness writes. It answers no write and nothing else, logs every call, and never runs the real `gh`.
-- The repository's `origin` is `https://github.com/acme-shop/shop.git`. Its push URL is a local bare repository, so a push cannot reach GitHub.
+- The repository's `origin` is `https://github.com/shopfront-example/shop.git`. Its push URL is a local bare repository, so a push cannot reach GitHub.
 
 ### Who approves
 
@@ -74,7 +74,7 @@ GitHub is a stand-in, `tools/fake_gh.py`, for both arms:
 
 Primary, per run:
 
-- tokens, and dollars (session plus approver), in total and for the ship phase alone;
+- total tokens, subagents included, in total and for the ship phase alone. Tokens are the unit that decides. Dollars (session plus approver) are reported and decide nothing;
 - whether the working tree reached the target (the pilot's rule), and in how many rounds.
 
 Secondary, per run:
@@ -86,16 +86,20 @@ Secondary, per run:
 ## Analysis
 
 - Each cell is reported as the median and the range of its runs, with the number of runs.
-- The cost result is the ratio of the Compass median to the bare median, per scenario.
+- The cost result is the ratio of the Compass median tokens to the bare median tokens, per scenario.
 - Reach is reported as runs at target out of runs started. A run that does not reach target has no ship phase and counts as a miss. The record criterion applies to Compass runs that reached target.
-- The thresholds that would count as a pass or a fail for 9.0.0 are **TO CONFIRM** with #361. This draft states none, because none is sourced.
+- 9.0.0 passes only if all three of these hold on every scenario (#361):
+  1. the median Compass tokens over the median bare tokens is at most 1.5;
+  2. Compass reaches the target in at least as many runs as bare, less one;
+  3. every Compass record passes `tools/check_record.py`, which reads only the files.
+- The result is published either way, with every run. If a scenario misses, the gap is the measured cost of the record.
 - Runs are not dropped. A run that fails for a reason outside the session (a harness error, an API outage) is reported with its reason and run again once, at the end.
 
 ## Budget
 
 The approved budget is about **$150 to $400** (#361). `STOP_USD=400` stops the script from starting a new run once the runs so far have spent that much, session plus approver.
 
-Caps per run, for the session, ship phase included (`SDD_RUN_BUDGET`), **TO CONFIRM**:
+Caps per run, in dollars, for the session, ship phase included (`SDD_RUN_BUDGET`). #361 sets each cap at 3 times the largest bare run of that scenario in the pilot, or more: $2.25, $6.57, $3.90 and $19.47. Every cap below is at least that:
 
 | Scenario | Bare | Compass |
 |---|---|---|

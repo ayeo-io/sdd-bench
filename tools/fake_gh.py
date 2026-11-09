@@ -22,11 +22,11 @@ than GET, a field or `--input`) and any `--jq` filter it does not know exits
 
 The state file is JSON:
 
-    {"repo": "acme-shop/shop",
+    {"repo": "shopfront-example/shop",
      "login": "<the login gh reads as>",
-     "issues": {"acme-shop/shop#41": {<gh issue view JSON>}},
-     "prs": {"acme-shop/shop#42": {<gh pr view JSON>}},
-     "reviews": {"acme-shop/shop#42": [<REST review objects>]}}
+     "issues": {"shopfront-example/shop#41": {<gh issue view JSON>}},
+     "prs": {"shopfront-example/shop#42": {<gh pr view JSON>}},
+     "reviews": {"shopfront-example/shop#42": [<REST review objects>]}}
 
 The harness writes `issues` when the run starts and `prs` and `reviews` when
 it merges the session's branch.

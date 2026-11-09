@@ -19,7 +19,7 @@ PR = {"number": 42, "title": "Make create_order idempotent", "state": "MERGED",
       "mergeCommit": {"oid": "b" * 40}, "mergedAt": "2026-11-09T10:30:00Z",
       "author": {"login": "sdd-bench-author"}, "headRefOid": "a" * 40,
       "headRefName": "fix/idem", "baseRefName": "main",
-      "url": "https://github.com/acme-shop/shop/pull/42"}
+      "url": "https://github.com/shopfront-example/shop/pull/42"}
 REVIEW = {"id": 9000042, "state": "APPROVED", "submitted_at": "2026-11-09T10:29:00Z",
           "commit_id": "a" * 40, "html_url": PR["url"] + "#pullrequestreview-9000042",
           "user": {"login": "sdd-bench-approver", "type": "User"}}
@@ -29,10 +29,10 @@ REVIEW = {"id": 9000042, "state": "APPROVED", "submitted_at": "2026-11-09T10:29:
 def state(tmp_path: Path) -> Path:
     path = tmp_path / "state.json"
     path.write_text(json.dumps({
-        "repo": "acme-shop/shop", "login": "sdd-bench-author",
-        "issues": {"acme-shop/shop#41": {"number": 41, "title": "Duplicate orders",
+        "repo": "shopfront-example/shop", "login": "sdd-bench-author",
+        "issues": {"shopfront-example/shop#41": {"number": 41, "title": "Duplicate orders",
                                          "state": "OPEN"}},
-        "prs": {"acme-shop/shop#42": PR}, "reviews": {"acme-shop/shop#42": [REVIEW]}}))
+        "prs": {"shopfront-example/shop#42": PR}, "reviews": {"shopfront-example/shop#42": [REVIEW]}}))
     return path
 
 
@@ -47,7 +47,7 @@ def calls(state: Path) -> list[dict]:
 
 
 def test_pr_view_prints_only_the_fields_asked_for(state: Path) -> None:
-    done = gh(state, "pr", "view", "42", "--repo", "acme-shop/shop",
+    done = gh(state, "pr", "view", "42", "--repo", "shopfront-example/shop",
               "--json", "number,state,mergeCommit,mergedAt,author,headRefOid,url")
     assert done.returncode == 0
     assert json.loads(done.stdout) == {k: PR[k] for k in (
@@ -55,12 +55,12 @@ def test_pr_view_prints_only_the_fields_asked_for(state: Path) -> None:
 
 
 def test_a_pull_request_not_yet_merged_is_not_found(state: Path) -> None:
-    done = gh(state, "pr", "view", "43", "--repo", "acme-shop/shop", "--json", "number")
+    done = gh(state, "pr", "view", "43", "--repo", "shopfront-example/shop", "--json", "number")
     assert done.returncode == 1 and "Could not resolve" in done.stderr
 
 
 def test_the_reviews_call_prints_one_object_a_line(state: Path) -> None:
-    done = gh(state, "api", "--paginate", "repos/acme-shop/shop/pulls/42/reviews",
+    done = gh(state, "api", "--paginate", "repos/shopfront-example/shop/pulls/42/reviews",
               "--jq", REVIEWS_JQ)
     assert done.returncode == 0
     assert [json.loads(line) for line in done.stdout.splitlines()] == [REVIEW]
@@ -72,16 +72,16 @@ def test_the_user_call_prints_the_login(state: Path) -> None:
 
 
 def test_issue_view_answers_the_request(state: Path) -> None:
-    done = gh(state, "issue", "view", "41", "--repo", "acme-shop/shop", "--json", "title")
+    done = gh(state, "issue", "view", "41", "--repo", "shopfront-example/shop", "--json", "title")
     assert json.loads(done.stdout) == {"title": "Duplicate orders"}
 
 
 @pytest.mark.parametrize("argv", [
     ("pr", "review", "42", "--approve"),
-    ("api", "--method", "POST", "repos/acme-shop/shop/pulls/42/reviews", "-f",
+    ("api", "--method", "POST", "repos/shopfront-example/shop/pulls/42/reviews", "-f",
      "event=APPROVE"),
-    ("api", "repos/acme-shop/shop/issues/41/comments", "-f", "body=hi"),
-    ("api", "repos/acme-shop/shop/pulls/42/reviews", "--jq", ".[0]"),
+    ("api", "repos/shopfront-example/shop/issues/41/comments", "-f", "body=hi"),
+    ("api", "repos/shopfront-example/shop/pulls/42/reviews", "--jq", ".[0]"),
     ("auth", "status"),
     ("--version",),
 ])
@@ -118,7 +118,7 @@ def test_the_harness_puts_the_fake_first_with_no_login(tmp_path: Path) -> None:
         assert "GH_TOKEN" not in env and "GITHUB_TOKEN" not in env
         harness._sdd_reset_github(root, {
             "id": "shop-idempotency", "prompt": "Retry.\n\nRequest: x",
-            "request": {"repo": "acme-shop/shop", "number": 41, "requester": "Sam Taylor"}})
+            "request": {"repo": "shopfront-example/shop", "number": 41, "requester": "Sam Taylor"}})
         done = subprocess.run(["gh", "issue", "view", "41", "--json", "author,body"],
                               capture_output=True, text=True, env=env)
         assert json.loads(done.stdout) == {"author": {"login": "sam-taylor"},
@@ -134,7 +134,7 @@ def test_the_seed_repository_has_main_and_a_local_push_url(tmp_path: Path) -> No
     repo.mkdir()
     (repo / "a.txt").write_text("a\n")
     env = {"PATH": os.environ.get("PATH", "")}
-    seed = harness._git_init_and_commit(repo, env, origin="https://github.com/acme-shop/shop.git",
+    seed = harness._git_init_and_commit(repo, env, origin="https://github.com/shopfront-example/shop.git",
                                         push_url=tmp_path / "remote.git")
 
     def git(*args: str) -> str:
@@ -142,7 +142,7 @@ def test_the_seed_repository_has_main_and_a_local_push_url(tmp_path: Path) -> No
                               text=True).stdout.strip()
 
     assert git("symbolic-ref", "--short", "HEAD") == "main"
-    assert git("config", "--get", "remote.origin.url") == "https://github.com/acme-shop/shop.git"
+    assert git("config", "--get", "remote.origin.url") == "https://github.com/shopfront-example/shop.git"
     assert git("config", "--get", "remote.origin.pushurl") == str(tmp_path / "remote.git")
     assert git("rev-parse", "refs/remotes/origin/main") == seed
     assert git("symbolic-ref", "refs/remotes/origin/HEAD") == "refs/remotes/origin/main"
