@@ -5,7 +5,10 @@ For each scenario under scenarios/:
 2. the seed's own tests pass;
 3. the hidden tests fail on the untouched seed (so they measure something);
 4. the hidden tests and the seed's tests pass on the seed with the
-   reference solution under reference/<scenario>/ laid over it.
+   reference solution under reference/<scenario>/ laid over it;
+5. the prompt's last line links the request that scenario.yml's `request:`
+   block names, in the form `Request: <issue URL> (from <requester>)`, and
+   the repository is not this benchmark's own.
 
 Usage: python3 tools/check_scenarios.py [--sync] [SCENARIO ...]
 --sync copies seeds/<seed>/ into each scenario's seed/ first. Naming
@@ -21,6 +24,8 @@ import sys
 import tempfile
 from pathlib import Path
 
+import yaml
+
 ROOT = Path(__file__).resolve().parent.parent
 SEED_OF = {"shop-idempotency": "shop", "shop-tracing": "shop", "shop-forget-user": "shop",
            "shop-change-email": "shop"}
@@ -32,6 +37,29 @@ def same_tree(a: Path, b: Path) -> bool:
     if cmp.left_only or cmp.right_only or cmp.diff_files or cmp.funny_files:
         return False
     return all(same_tree(a / d, b / d) for d in cmp.common_dirs)
+
+
+def request_line(scenario: dict) -> str | None:
+    """The link line the prompt must end with, or None when `request:` is
+    missing or names this benchmark's repository."""
+    request = scenario.get("request")
+    if not isinstance(request, dict):
+        return None
+    repo, number, who = request.get("repo"), request.get("number"), request.get("requester")
+    if not (isinstance(repo, str) and "/" in repo and isinstance(number, int) and who):
+        return None
+    if "sdd-bench" in repo.lower():
+        return None
+    return f"Request: https://github.com/{repo}/issues/{number} (from {who})"
+
+
+def links_request(sdir: Path) -> bool:
+    """The prompt's last non-blank line is the request's link line."""
+    scenario = yaml.safe_load((sdir / "scenario.yml").read_text(encoding="utf-8"))
+    lines = [line.strip() for line in str(scenario.get("prompt", "")).splitlines()
+             if line.strip()]
+    wanted = request_line(scenario)
+    return wanted is not None and bool(lines) and lines[-1] == wanted
 
 
 def pytest(cwd: Path, *args: str) -> int:
@@ -55,7 +83,8 @@ def main() -> int:
         if sync:
             shutil.rmtree(sdir / "seed", ignore_errors=True)
             shutil.copytree(src, sdir / "seed", ignore=IGNORE)
-        checks = {"seed matches": same_tree(src, sdir / "seed")}
+        checks = {"seed matches": same_tree(src, sdir / "seed"),
+                  "prompt links the request": links_request(sdir)}
         hidden = next((sdir / "hidden_tests" / "tests").glob("test_*.py")).name
         with tempfile.TemporaryDirectory() as tmp:
             work = Path(tmp) / "w"

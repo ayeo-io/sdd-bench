@@ -4,6 +4,16 @@ prompt: |
   Their orders and subscriptions must be deleted too. Each service has its
   own store, so this cannot be one transaction, and the user service must
   not need to know which other services hold data about a user.
+
+  Request: https://github.com/acme-shop/shop/issues/53 (from Alex Morgan)
+# The request the prompt's last line links. Both arms see the same line;
+# the harness's fake GitHub answers for this issue, and the pull request
+# is number + 1. tools/check_scenarios.py checks the two agree.
+request:
+  repo: acme-shop/shop
+  number: 53
+  requester: Alex Morgan
+  title: Forget a customer on request
 budget_usd: 5.0
 hidden_command: python3 -m pytest tests/test_hidden_forget_user.py -q
 continue_reply: Go ahead with whichever option you recommend.

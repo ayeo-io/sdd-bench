@@ -4,6 +4,16 @@ prompt: |
   UserService.change_email(user_id, new_email), and announce the change on
   the bus so other services can act on it: a mail service will later send
   the customer a confirmation. An email address is personal data.
+
+  Request: https://github.com/acme-shop/shop/issues/58 (from Jordan Lee)
+# The request the prompt's last line links. Both arms see the same line;
+# the harness's fake GitHub answers for this issue, and the pull request
+# is number + 1. tools/check_scenarios.py checks the two agree.
+request:
+  repo: acme-shop/shop
+  number: 58
+  requester: Jordan Lee
+  title: Let customers change their email address
 budget_usd: 3.0
 hidden_command: python3 -m pytest tests/test_hidden_change_email.py -q
 continue_reply: Go ahead with whichever option you recommend.

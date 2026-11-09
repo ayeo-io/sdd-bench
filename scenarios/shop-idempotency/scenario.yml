@@ -4,6 +4,16 @@ prompt: |
   and we have seen duplicate orders. Let create_order take an optional
   request_id: a retry with the same request_id must not create a second
   order, and must return the same order id as the first call.
+
+  Request: https://github.com/acme-shop/shop/issues/41 (from Sam Taylor)
+# The request the prompt's last line links. Both arms see the same line;
+# the harness's fake GitHub answers for this issue, and the pull request
+# is number + 1. tools/check_scenarios.py checks the two agree.
+request:
+  repo: acme-shop/shop
+  number: 41
+  requester: Sam Taylor
+  title: Retried create_order makes duplicate orders
 budget_usd: 3.0
 hidden_command: python3 -m pytest tests/test_hidden_idempotency.py -q
 continue_reply: Go ahead with whichever option you recommend.
