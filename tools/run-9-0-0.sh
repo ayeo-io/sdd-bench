@@ -30,6 +30,7 @@
 #   PY            the python3 that has pytest, mypy, ruff, coverage and pyyaml
 #                 (default: python3 on PATH)
 #   RUNS          runs per arm per scenario (default 6)
+#   ONLY          a space-separated subset of scenarios, for the smoke test
 #   STOP_USD      start no new run once the runs so far have spent this much,
 #                 session plus approver (default 400, the top of the budget)
 #
@@ -47,7 +48,12 @@ STOP_USD=${STOP_USD:-400}
 DRY=0
 [ "${1:-}" = "--dry-run" ] && DRY=1
 
-SCENARIOS=(shop-idempotency shop-tracing shop-forget-user shop-change-email)
+# ONLY names a subset, for the smoke test, as a space-separated list.
+if [ -n "${ONLY:-}" ]; then
+  read -r -a SCENARIOS <<< "$ONLY"
+else
+  SCENARIOS=(shop-idempotency shop-tracing shop-forget-user shop-change-email)
+fi
 ARMS=(bare compass)
 
 # Caps in dollars per run, for the session, ship phase included. Bare: about
