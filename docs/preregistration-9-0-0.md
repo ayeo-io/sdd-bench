@@ -14,13 +14,13 @@ This measurement is ayeo-io/compass-delivery#361 [Run the pre-registered sdd-ben
 
 | | |
 |---|---|
-| Arms | `bare`, and `compass` at the 9.0.0 release candidate, commit `1f72f5fa` (run with `COMPASS_REF=1f72f5fa`) |
+| Arms | `bare`, and `compass` at the 9.0.0 release candidate, commit `71efbb89` (run with `COMPASS_REF=71efbb89`) |
 | Scenarios | `shop-idempotency`, `shop-tracing`, `shop-forget-user`, `shop-change-email`, at the bench commit that adds this file |
 | Runs | 3 per arm per scenario, 24 in all |
 | Order | Interleaved: run 1 of every cell, then run 2, and so on. Within a run number, scenario by scenario, bare then Compass. A stop at the budget leaves every cell with the same number of runs, give or take one. |
 | Runner | `tools/harness.py` at the bench commit. The harness no longer lives in Compass (#354), so the runner is not part of the framework under test. |
 | Model | `claude-opus-5-5`, pinned in the harness. Claude Code `2.1.321`, the same for both arms (recorded in `RUN.yml`). |
-| Command | `COMPASS_REF=1f72f5fa bash tools/run-9-0-0.sh` |
+| Command | `COMPASS_REF=71efbb89 bash tools/run-9-0-0.sh` |
 
 The pilot showed bare varying by up to 3x between two runs of one cell, so one run per cell cannot separate a 1.5x result from noise. #361 asks for 6 runs per cell. This measurement runs 3, because 6 would cost about $650 at the smoke test's prices and the budget is $400 (owner's decision, 10 Nov 2026). A median of 3 runs separates a 1.5x result from noise less well than 6; the report says so for any scenario whose range crosses 1.5.
 
@@ -129,7 +129,7 @@ Duration: the smoke test's runs took 3 to 18 minutes each. With a Compass `shop-
    - `shop-idempotency`, Compass: it linked the request, landed the change on a branch with `compass quick-fix finish`, and ran `compass issue link set --pr 42` after the merged message. The fake GitHub logged the three expected calls. The land commit, read from git because the record landed with the code, was the squash commit at the tip of `main`. The checker passed all six checks, and failed a copy that was wrong on purpose on four of them.
    - `shop-change-email`, Compass: it asked for the scenario and `G5` sign-offs, which the runner approved at the terminal, and committed with git. The checker passed the approvals and the ship approval, and failed land-commit, because the stand-in does not do the full route's reviews and the issue did not land.
    - `shop-idempotency`, bare: it committed on a branch; the harness merged it, and the fake GitHub logged no call.
-2. **Smoke test, done, $40.46.** One bare run and one Compass run of `shop-idempotency` and of `shop-change-email`, on commit `1f72f5fa`. These runs are not part of the measurement.
+2. **Smoke test, done, $40.46.** One bare run and one Compass run of `shop-idempotency` and of `shop-change-email`, on commit `1f72f5fa`, which differs from the measured commit only in one paragraph of `governance/guardrails.md` and one test docstring. These runs are not part of the measurement.
 
    | Run | Tokens | Dollars | Reached target | Ship phase |
    |---|---|---|---|---|
