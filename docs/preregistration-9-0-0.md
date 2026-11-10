@@ -94,6 +94,7 @@ Secondary, per run:
   3. every Compass record passes `tools/check_record.py`, which reads only the files.
 - The result is published either way, with every run. If a scenario misses, the gap is the measured cost of the record.
 - Runs are not dropped. A run that fails for a reason outside the session (a harness error, an API outage) is reported with its reason and run again once, at the end.
+- The report also compares bare, Compass 8.0.4 and Compass 9.0.0 per scenario, in one table, for context. It decides nothing. The 8.0.4 figures come from the pilot, which had 1 or 2 runs per cell, no Compass run on `shop-tracing` and no ship phase. So the like-for-like column uses the tokens before the ship phase, and the table also gives 9.0.0 totals with the ship phase.
 
 ## Budget
 
