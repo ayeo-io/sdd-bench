@@ -55,6 +55,11 @@ else
   SCENARIOS=(shop-idempotency shop-tracing shop-forget-user shop-change-email)
 fi
 ARMS=(bare compass)
+# ONLY_ARMS names a subset of the arms, for an experiment that reuses a
+# baseline. CAP_COMPASS_TRACING overrides one cap, in dollars.
+if [ -n "${ONLY_ARMS:-}" ]; then
+  read -r -a ARMS <<< "$ONLY_ARMS"
+fi
 
 # Caps in dollars per run, for the session, ship phase included. Bare: about
 # 2 to 3 times its largest pilot spend. Compass: about 1.3 times its largest
@@ -68,7 +73,7 @@ cap() {
     bare:shop-forget-user) echo 8 ;;
     bare:shop-change-email) echo 15 ;;
     compass:shop-idempotency) echo 6 ;;
-    compass:shop-tracing) echo 60 ;;
+    compass:shop-tracing) echo "${CAP_COMPASS_TRACING:-60}" ;;
     compass:shop-forget-user) echo 35 ;;
     compass:shop-change-email) echo 35 ;;
     *) echo "no cap for $1 $2" >&2; exit 2 ;;
