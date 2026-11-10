@@ -16,8 +16,8 @@ Six checks, one result each, for every issue under `.compass/work/`:
                       or `request.link`), and with `--expect-request` it is
                       that request;
 4. approvals          every approval the record says is required is on record,
-                      and a sign-off before code was given before the first
-                      green;
+                      the `specify` approval before the first green, and
+                      the G5 sign-off before the landing;
 5. land-commit        the land commit is on the result branch, and with
                       `--base` it comes after that commit;
 6. ship-approval      a person other than the pull request's author approved
@@ -58,8 +58,10 @@ What the checker reads, and the limits of each check:
   listed under `evidence_required:` requires an approved record of that type;
   and the 9.0.0 token `scenario-approval` requires the `specify` checkpoint's
   approval. A `pr-approval` record, or a typed approval at ship (`ship:`), is
-  never the G5 sign-off. The G5 sign-off and the `specify` approval are given
-  before code, so each must be timed before the first green on record.
+  never the G5 sign-off. The `specify` approval is given before code, so it
+  must be timed before the first green on record. The G5 sign-off is checked
+  at ship ("before it lands", Compass `governance/guardrails.md`), so it must
+  be timed before the record's `land_timestamp` when the record has one.
 - The land commit is the stored `land_commit`. A 9.0.0 record committed with
   the code (`landed_with_record: true`) stores none; then it is the newest
   commit on the result branch that added the manifest's `land_timestamp`
@@ -347,7 +349,10 @@ def required_approvals(manifest: dict[str, Any]) -> list[tuple[str, str]]:
 
 
 #: The approvals given before code, so each must come before the first green.
-BEFORE_CODE = ("sign-off", "checkpoint:specify")
+BEFORE_CODE = ("checkpoint:specify",)
+#: The approvals given before the change lands, so each must come before the
+#: record's `land_timestamp`.
+BEFORE_LAND = ("sign-off",)
 
 
 def find_approval(manifest: dict[str, Any], what: str
@@ -390,12 +395,13 @@ def first_green(records: list[dict[str, Any]]) -> datetime | None:
 
 def check_approvals(manifest: dict[str, Any],
                     records: list[dict[str, Any]] | None = None) -> dict[str, Any]:
-    """Every approval the record says is required is on record, and each one
-    given before code was given before the first green."""
+    """Every approval the record says is required is on record, the `specify`
+    approval before the first green, and the G5 sign-off before the landing."""
     needed = required_approvals(manifest)
     if not needed:
         return result(PASS, "the record requires no approval")
     green = first_green(records or [])
+    landed = parse_time(manifest.get("land_timestamp"))
     rows = []
     for what, why in needed:
         ok, detail, entry = find_approval(manifest, what)
@@ -406,6 +412,13 @@ def check_approvals(manifest: dict[str, Any],
             elif when >= green:
                 ok, detail = False, (f"{detail} at {when.isoformat()}, not before the "
                                      f"first green at {green.isoformat()}")
+        if ok and entry is not None and what in BEFORE_LAND and landed is not None:
+            when = parse_time(entry.get("timestamp"))
+            if when is None:
+                ok, detail = False, f"{detail}, with no time, so not shown before landing"
+            elif when >= landed:
+                ok, detail = False, (f"{detail} at {when.isoformat()}, not before the "
+                                     f"landing at {landed.isoformat()}")
         rows.append({"required": what, "because": why, "met": ok, "detail": detail})
     unmet = [r for r in rows if not r["met"]]
     if unmet:

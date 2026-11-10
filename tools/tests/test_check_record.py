@@ -325,13 +325,24 @@ def test_the_cli_refuses_a_malformed_expected_request(workspace: Path) -> None:
         check_record.main(["--workspace", str(workspace), "--expect-request", "shop#12"])
 
 
-def test_a_sign_off_after_the_first_green_fails(workspace: Path) -> None:
+def test_a_sign_off_after_the_first_green_but_before_landing_passes(
+        workspace: Path) -> None:
+    # Compass checks the G5 sign-off at ship, "before it lands".
     manifest = good_manifest(workspace)
     manifest["evidence"][0]["timestamp"] = "2026-10-31T10:30:00Z"
+    manifest["land_timestamp"] = "2026-10-31T11:00:00Z"
+    write_issue(workspace, manifest, good_records())
+    assert statuses(workspace)["approvals"] == "pass"
+
+
+def test_a_sign_off_after_the_landing_fails(workspace: Path) -> None:
+    manifest = good_manifest(workspace)
+    manifest["evidence"][0]["timestamp"] = "2026-10-31T11:30:00Z"
+    manifest["land_timestamp"] = "2026-10-31T11:00:00Z"
     write_issue(workspace, manifest, good_records())
     check = check_record.check_workspace(workspace)["issues"][0]["checks"]["approvals"]
     assert check["status"] == "fail"
-    assert "not before the first green at 2026-10-31T10:05:00+00:00" in check["detail"]
+    assert "not before the landing at 2026-10-31T11:00:00+00:00" in check["detail"]
 
 
 def test_a_typed_ship_approval_is_not_the_sign_off(workspace: Path) -> None:

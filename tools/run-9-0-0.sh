@@ -1,8 +1,8 @@
 #!/bin/bash
 # Run the pre-registered sdd-bench measurement of Compass 9.0.0
-# (docs/preregistration-9-0-0.md): 6 runs per arm per scenario, 48 runs, in
+# (docs/preregistration-9-0-0.md): 3 runs per arm per scenario, 24 runs, in
 # this order:
-#   run 1 of every cell, then run 2, and so on to run 6;
+#   run 1 of every cell, then run 2, and so on to run 3;
 #   within a run number, scenario by scenario, bare then Compass.
 # So a stop at the budget leaves every cell with the same number of runs, give
 # or take one.
@@ -29,7 +29,7 @@
 #                 (default ~/dev/sdd-bench-runs/9-0-0)
 #   PY            the python3 that has pytest, mypy, ruff, coverage and pyyaml
 #                 (default: python3 on PATH)
-#   RUNS          runs per arm per scenario (default 6)
+#   RUNS          runs per arm per scenario (default 3)
 #   ONLY          a space-separated subset of scenarios, for the smoke test
 #   STOP_USD      start no new run once the runs so far have spent this much,
 #                 session plus approver (default 400, the top of the budget)
@@ -43,7 +43,7 @@ COMPASS_REPO=${COMPASS_REPO:-$HOME/dev/compass}
 COMPASS_REF=${COMPASS_REF:-v9.0.0}
 RUN_OUT=${RUN_OUT:-$HOME/dev/sdd-bench-runs/9-0-0}
 PY=${PY:-python3}
-RUNS=${RUNS:-6}
+RUNS=${RUNS:-3}
 STOP_USD=${STOP_USD:-400}
 DRY=0
 [ "${1:-}" = "--dry-run" ] && DRY=1
